@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Market alert checker: polls Gate.io futures prices, evaluates price-cross
-rules from config.json, and pushes alerts to Telegram.
+"""Market alert checker: polls Gate.io futures data, evaluates rules from
+config.json, and pushes alerts to Telegram.
 
 Runs on GitHub Actions on a schedule. Keeps a small state file so each rule
 fires only once per crossing (re-arms after price returns to the other side).
+
+Two rule types are supported:
+  - fixed price:  {"symbol","label","type":"cross_up"|"cross_down","price"}
+  - indicator:    {"symbol","label","type":"breakout","indicator":"prev_ohlc",
+                   "tf":"1h"|"4h"|"1d","offset":N,"field":"high"|"low"|
+                   "open"|"close","dir":"up"|"down"}
+    The breakout rule derives its level from the previous period's OHLC
+    (Beijing time aligned, matching the dashboard indicator). `offset` counts
+    back from the newest period: 2 = last completed period, 3 = the one before.
 
 Only the Python standard library is used, so no pip install is needed.
 """
@@ -24,6 +33,14 @@ BJ = timezone(timedelta(hours=8))
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
+# 与看盘页保持一致：北京时间对齐；聚合基准周期用 1h
+BJ_OFFSET = 8 * 3600
+BASE_INTERVAL = "1h"
+CANDLE_LIMIT = 1000
+TF_SECONDS = {"1h": 3600, "4h": 14400, "1d": 86400}
+TF_NAME = {"1h": "1小时", "4h": "4小时", "1d": "日"}
+FIELD_NAME = {"open": "开", "high": "高", "low": "低", "close": "收"}
+
 
 def http_json(url, timeout=20):
     req = urllib.request.Request(
@@ -38,6 +55,65 @@ def get_price(contract):
     data = http_json(f"{BASE}/futures/usdt/tickers?contract={contract}")
     row = data[0] if isinstance(data, list) else data
     return float(row["last"])
+
+
+def get_candles(contract, interval=BASE_INTERVAL, limit=CANDLE_LIMIT):
+    url = (
+        f"{BASE}/futures/usdt/candlesticks"
+        f"?contract={contract}&interval={interval}&limit={limit}"
+    )
+    data = http_json(url)
+    return data if isinstance(data, list) else []
+
+
+def aggregate_periods(candles, secs):
+    """Aggregate ascending 1h candles into Beijing-aligned periods of `secs`."""
+    out = []
+    cur = None
+    for cd in candles:
+        try:
+            t = int(cd["t"])
+            o = float(cd["o"])
+            h = float(cd["h"])
+            low = float(cd["l"])
+            c = float(cd["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = (t + BJ_OFFSET) // secs
+        if cur is None or cur["key"] != key:
+            if cur is not None:
+                out.append(cur)
+            cur = {"key": key, "open": o, "high": h, "low": low, "close": c}
+        else:
+            cur["high"] = max(cur["high"], h)
+            cur["low"] = min(cur["low"], low)
+            cur["close"] = c
+    if cur is not None:
+        out.append(cur)
+    return out
+
+
+def prev_ohlc_level(contract, tf, offset, field):
+    secs = TF_SECONDS.get(tf)
+    if secs is None:
+        raise ValueError(f"unsupported tf: {tf}")
+    if field not in FIELD_NAME:
+        raise ValueError(f"unsupported field: {field}")
+    if offset < 2:
+        raise ValueError("breakout 需要 offset >= 2（当前正在形成的周期不适用）")
+    periods = aggregate_periods(get_candles(contract), secs)
+    idx = len(periods) - offset
+    if idx < 0:
+        raise ValueError(f"offset {offset} 超出可用周期数 {len(periods)}")
+    return periods[idx][field]
+
+
+def period_name(tf, offset):
+    prev = offset - 1
+    if tf == "1d":
+        return "前日" if prev == 1 else f"前{prev}日"
+    unit = TF_NAME.get(tf, tf)
+    return ("前" + unit) if prev == 1 else f"前{prev}个{unit}"
 
 
 def load_json(path, default):
@@ -55,7 +131,43 @@ def save_json(path, obj):
 
 
 def rule_id(rule):
+    if rule.get("type") == "breakout":
+        return "{}:breakout:{}:{}:{}:{}".format(
+            rule["symbol"],
+            rule.get("tf"),
+            rule.get("offset"),
+            rule.get("field"),
+            rule.get("dir", "up"),
+        )
     return f'{rule["symbol"]}:{rule["type"]}:{rule["price"]}'
+
+
+def resolve_level(rule):
+    """Return (level, is_up) for a rule.
+
+    is_up=True means the rule watches an upward break / cross above.
+    """
+    if rule.get("type") == "breakout":
+        indicator = rule.get("indicator", "prev_ohlc")
+        if indicator != "prev_ohlc":
+            raise ValueError(f"unsupported indicator: {indicator}")
+        level = prev_ohlc_level(
+            rule["symbol"],
+            rule.get("tf", "1d"),
+            int(rule.get("offset", 2)),
+            rule.get("field", "high"),
+        )
+        return level, rule.get("dir", "up") == "up"
+    return float(rule["price"]), rule["type"] == "cross_up"
+
+
+def rule_desc(rule):
+    if rule.get("type") == "breakout":
+        return "{}{}".format(
+            period_name(rule.get("tf", "1d"), int(rule.get("offset", 2))),
+            FIELD_NAME.get(rule.get("field", "high"), rule.get("field")),
+        )
+    return ""
 
 
 def fmt_price(value):
@@ -105,8 +217,13 @@ def main():
     for rule in rules:
         symbol = rule["symbol"]
         label = rule.get("label", symbol)
-        level = float(rule["price"])
-        rtype = rule["type"]
+        rid = rule_id(rule)
+
+        try:
+            level, is_up = resolve_level(rule)
+        except Exception as e:  # noqa: BLE001
+            print(f"!! resolve {rid} failed: {e}")
+            continue
 
         if symbol not in price_cache:
             try:
@@ -119,30 +236,43 @@ def main():
             continue
 
         side = "above" if price >= level else "below"
-        rid = rule_id(rule)
         prev = seen.get(rid)
+        if isinstance(prev, str):  # 兼容旧状态格式
+            prev = {"side": prev, "level": None}
+        prev_side = prev.get("side") if isinstance(prev, dict) else None
+        prev_level = prev.get("level") if isinstance(prev, dict) else None
 
+        same_level = (
+            isinstance(prev_level, (int, float))
+            and abs(float(prev_level) - level) < 1e-9
+        )
         fired = False
-        if prev is not None and prev != side:
-            if rtype == "cross_up" and prev == "below" and side == "above":
+        if prev_side is not None and prev_side != side and same_level:
+            if is_up and prev_side == "below" and side == "above":
                 fired = True
-            elif rtype == "cross_down" and prev == "above" and side == "below":
+            elif (not is_up) and prev_side == "above" and side == "below":
                 fired = True
 
-        if prev != side:
-            seen[rid] = side
+        if prev_side != side or not same_level:
+            seen[rid] = {"side": side, "level": level}
             changed = True
 
-        direction = "上破" if rtype == "cross_up" else "下破"
-        print(f"{label} {symbol} last={price} level={level} side={side} prev={prev} fired={fired}")
+        direction = "上破" if is_up else "下破"
+        print(
+            f"{label} {symbol} last={price} level={level} side={side} "
+            f"prev={prev_side} fired={fired}"
+        )
 
         if fired:
-            arrow = "\U0001F53C" if rtype == "cross_up" else "\U0001F53D"
+            arrow = "\U0001F53C" if is_up else "\U0001F53D"
             ts = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
-            messages.append(
-                f"{arrow} {label} {direction} {fmt_price(level)}\n"
-                f"现价 {fmt_price(price)}（{ts} 北京时间）"
-            )
+            desc = rule_desc(rule)
+            subject = f"{label} {direction}"
+            if desc:
+                subject += f" {desc}"
+            else:
+                subject += f" {fmt_price(level)}"
+            messages.append(f"{arrow} {subject}\n现价 {fmt_price(price)}（{ts} 北京时间）")
 
     if changed:
         save_json(STATE_PATH, state)
