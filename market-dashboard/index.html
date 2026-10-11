@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="zh-CN" translate="no">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="google" content="notranslate" />
+<title translate="no">BTC / XAU 合约看盘</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --border: #232a33; --text: #d1d9e0;
+    --muted: #7d8590; --up: #26a69a; --down: #ef5350; --accent: #2962ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 12px; border-bottom: 1px solid var(--border); flex: none;
+    background: rgba(14,17,23,0.94); backdrop-filter: blur(6px); z-index: 10; flex-wrap: wrap; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .group { display: flex; align-items: center; gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+  .group .lbl { font-size: 11px; color: var(--muted); padding: 0 6px 0 4px; }
+  .group button { background: transparent; color: var(--muted); border: 0; padding: 5px 10px;
+    border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .group button.active { background: var(--accent); color: #fff; }
+  .group button:hover:not(.active) { color: var(--text); }
+  .btn-settings { background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .btn-settings:hover { border-color: var(--accent); }
+  .tf-select { display: none; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 6px 8px; font-size: 12px; font-weight: 600; }
+  .status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); box-shadow: 0 0 6px var(--up); }
+  .dot.off { background: var(--down); box-shadow: 0 0 6px var(--down); }
+  main { flex: 1; min-height: 0; display: flex; padding: 8px 10px; }
+  .panel { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow-y: auto; flex-direction: column; flex: 1; min-height: 0; }
+  .panel.active { display: flex; }
+  .panel-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px 4px; flex-wrap: wrap; flex: none; }
+  .sym { font-size: 12px; font-weight: 700; }
+  .sym small { font-size: 10px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .price { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .chg { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .stats { display: flex; gap: 10px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+  .stats b { color: var(--text); font-weight: 600; margin-left: 2px; }
+  .main-wrap { position: relative; flex: 1; min-height: 200px; display: flex; flex-direction: column; background: var(--panel); }
+  .chart-main { position: relative; z-index: 1; width: 100%; flex: 1; min-height: 0; touch-action: none; }
+  .sessions-overlay { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  .sbox { position: absolute; box-sizing: border-box; }
+  .slabel { position: absolute; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); }
+  .sline { position: absolute; height: 0; border-top: 1px dashed; }
+  .snode { position: absolute; font-size: 9px; white-space: nowrap; }
+  .ohlc-fill { position: absolute; box-sizing: border-box; pointer-events: none; }
+  .ohlc-line { position: absolute; height: 0; pointer-events: none; }
+  .ohlc-label { position: absolute; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; }
+  .scale-btns { position: absolute; right: 5px; bottom: 4px; display: flex; flex-direction: row; gap: 8px; z-index: 5; }
+  .scale-btns button { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border); background: rgba(22,27,34,0.85); color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1; padding: 0; }
+  .scale-btns button:hover { color: var(--text); }
+  .scale-btns button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chart-sub { width: 100%; height: 120px; flex: none; border-top: 1px solid var(--border); touch-action: none; }
+  footer { text-align: center; color: var(--muted); font-size: 10px; padding: 4px 0 6px; flex: none; }
+  @media (max-width: 720px) {
+    header h1 { display: none; }
+    header { padding: 6px 8px; gap: 6px; }
+    #tfGroup { display: none; }
+    .tf-select { display: block; }
+    .group { padding: 2px; }
+    .group button { padding: 4px 8px; font-size: 11px; }
+    .btn-settings { padding: 5px 10px; font-size: 11px; }
+    #statusText { display: none; }
+    .stats { display: none; }
+    .panel-head { padding: 5px 8px 3px; gap: 6px; }
+    main { padding: 6px; }
+    footer { display: none; }
+  }
+  .mask { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+  .mask.show { display: flex; }
+  .modal { background: #161b22; border: 1px solid var(--border); border-radius: 12px; width: 560px; max-width: 100%; max-height: 86vh; display: flex; flex-direction: column; }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .modal-head span { font-weight: 700; }
+  .modal-head .actions { display: flex; gap: 8px; }
+  .modal-head button { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  .modal-head button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .modal-body { padding: 8px 18px 18px; overflow-y: auto; }
+  .ind-row { border-bottom: 1px solid var(--border); padding: 9px 0; }
+  .ind-row:last-child { border-bottom: 0; }
+  .ind-title { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; user-select: none; }
+  .ind-title input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  .ind-title em { font-style: normal; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+  .caret { margin-left: auto; font-size: 10px; color: var(--muted); transition: transform .15s; }
+  .caret::before { content: "\25B8"; }
+  .ind-row:not(.collapsed) > .ind-title > .caret { transform: rotate(90deg); }
+  .ind-row.collapsed > .ind-body { display: none; }
+  .params { margin: 8px 0 0 24px; }
+  .params label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .params input { width: 64px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .params select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .params input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); padding: 0; }
+  .params input[type="color"] { width: 42px; height: 26px; padding: 1px; }
+  .params input[type="time"] { width: 96px; }
+  .params input[type="text"] { width: 160px; }
+  .param-group { width: 100%; font-size: 12px; font-weight: 700; color: var(--text); margin: 10px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .param-box { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 0; }
+</style>
+</head>
+<body class="notranslate">
+<header>
+  <h1>合约看盘 · BTC / XAU</h1>
+  <div class="toolbar">
+    <div class="group" id="tabs"></div>
+    <div class="group" id="tfGroup"></div>
+    <select id="tfSelect" class="tf-select"></select>
+    <button class="btn-settings" id="btnSettings">指标设置</button>
+    <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
+  </div>
+</header>
+<main id="main"></main>
+<footer>数据来源：Gate.io 永续合约公开接口（自用）。行情仅供参考，不构成投资建议。</footer>
+
+<div class="mask" id="mask">
+  <div class="modal">
+    <div class="modal-head">
+      <span>指标设置</span>
+      <div class="actions">
+        <button id="btnReset">重置默认</button>
+        <button class="primary" id="btnClose">完成</button>
+      </div>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var API = "https://api.gateio.ws/api/v4/futures/usdt";
+  var REFRESH_MS = 5000;
+  var BARS = 400;
+
+  var INSTRUMENTS = [
+    { key: "BTC_USDT", label: "BTC/USDT", sub: "永续" },
+    { key: "XAU_USDT", label: "XAU/USDT", sub: "永续" }
+  ];
+  var INTERVALS = [
+    { key: "1m", label: "1分" }, { key: "5m", label: "5分" },
+    { key: "15m", label: "15分" }, { key: "1h", label: "1时" },
+    { key: "4h", label: "4时" }, { key: "1d", label: "日" }
+  ];
+  /* TradingView 默认配色 */
+  var COL = {
+    up: "#26a69a", down: "#ef5350",
+    m1: "#2962FF", m2: "#FF6D00", m3: "#F23645",
+    bollUp: "#787B86", bollMid: "#FF6D00", bollLow: "#787B86",
+    macd: "#2962FF", signal: "#FF6D00",
+    rsi: "#7E57C2", k: "#2962FF", d: "#FF6D00", j: "#7E57C2",
+    guide: "rgba(120,123,134,0.6)"
+  };
+  var SOURCE_OPTS = [
+    { value: "close", label: "收盘价 close" },
+    { value: "open", label: "开盘价 open" },
+    { value: "high", label: "最高价 high" },
+    { value: "low", label: "最低价 low" },
+    { value: "hl2", label: "(high+low)/2" },
+    { value: "hlc3", label: "(high+low+close)/3" },
+    { value: "ohlc4", label: "(open+high+low+close)/4" }
+  ];
+  var MATYPE_OPTS = [
+    { value: "SMA", label: "SMA 简单" },
+    { value: "EMA", label: "EMA 指数" },
+    { value: "WMA", label: "WMA 加权" },
+    { value: "RMA", label: "RMA 平滑(Wilder)" }
+  ];
+  var LINE_STYLE_OPTS = [
+    { value: "solid", label: "实线" },
+    { value: "dashed", label: "虚线" },
+    { value: "dotted", label: "点线" }
+  ];
+
+  var state = { interval: "15m", activeInst: 0 };
+
+  /* ================= indicator registry ================= */
+  /* 新增指标：在这里加一条即可。calc(data, params) 返回与 series 一一对应的数据数组 */
+  var IND = {
+    sessions: {
+      name: "交易时段 Sessions", pane: "main", type: "sessions",
+      params: [
+        { key: "showName", label: "显示时段名称", type: "bool", def: true, group: "常规设置" },
+        { key: "opacity", label: "透明度%", type: "int", def: 12, group: "常规设置" },
+        { key: "labelOpacity", label: "名称透明度%", type: "int", def: 100, group: "常规设置" },
+        { key: "showOC", label: "绘制开盘/收盘价线", type: "bool", def: false, group: "常规设置" },
+        { key: "showAvg", label: "显示平均价格", type: "bool", def: false, group: "常规设置" },
+        { key: "showRange", label: "显示价格区间", type: "bool", def: false, group: "常规设置" },
+
+        { key: "s1on", label: "启用", type: "bool", def: true, group: "第一时段" },
+        { key: "s1name", label: "名称", type: "text", def: "Tokyo", group: "第一时段" },
+        { key: "s1start", label: "开始", type: "time", def: "09:00", group: "第一时段" },
+        { key: "s1end", label: "结束", type: "time", def: "15:00", group: "第一时段" },
+        { key: "s1tz", label: "时区 (IANA)", type: "text", def: "Asia/Tokyo", group: "第一时段" },
+        { key: "s1color", label: "颜色", type: "color", def: "#2962FF", group: "第一时段" },
+
+        { key: "s2on", label: "启用", type: "bool", def: true, group: "第二时段" },
+        { key: "s2name", label: "名称", type: "text", def: "London", group: "第二时段" },
+        { key: "s2start", label: "开始", type: "time", def: "08:00", group: "第二时段" },
+        { key: "s2end", label: "结束", type: "time", def: "16:30", group: "第二时段" },
+        { key: "s2tz", label: "时区 (IANA)", type: "text", def: "Europe/London", group: "第二时段" },
+        { key: "s2color", label: "颜色", type: "color", def: "#FF6D00", group: "第二时段" },
+
+        { key: "s3on", label: "启用", type: "bool", def: true, group: "第三时段" },
+        { key: "s3name", label: "名称", type: "text", def: "New York", group: "第三时段" },
+        { key: "s3start", label: "开始", type: "time", def: "09:30", group: "第三时段" },
+        { key: "s3end", label: "结束", type: "time", def: "16:00", group: "第三时段" },
+        { key: "s3tz", label: "时区 (IANA)", type: "text", def: "America/New_York", group: "第三时段" },
+        { key: "s3color", label: "颜色", type: "color", def: "#089981", group: "第三时段" }
+      ],
+      series: [],
+      calc: null
+    },
+    prevOHLC: {
+      name: "前一时段 OHLC", pane: "main", type: "prevOHLC",
+      params: [
+        { key: "tf", label: "时间周期", type: "select", def: "1d", group: "常规设置", options: [
+          { value: "15m", label: "15分钟" }, { value: "1h", label: "1小时" }, { value: "4h", label: "4小时" }, { value: "1d", label: "日线" }
+        ] },
+        { key: "offset", label: "周期偏移", type: "int", def: 1, group: "常规设置" },
+        { key: "showLabel", label: "显示标签", type: "bool", def: false, group: "常规设置" },
+        { key: "extend", label: "延长至右侧", type: "bool", def: false, group: "常规设置" },
+        { key: "fillOn", label: "填充高低区间", type: "bool", def: true, group: "常规设置" },
+        { key: "fillColor", label: "填充颜色", type: "color", def: "#c0c0c0", group: "常规设置" },
+        { key: "fillOpacity", label: "填充透明度%", type: "int", def: 80, group: "常规设置" },
+
+        { key: "openOn", label: "开 显示", type: "bool", def: true, group: "线条样式" },
+        { key: "openStyle", label: "开 线型", type: "select", def: "dashed", group: "线条样式", options: LINE_STYLE_OPTS },
+        { key: "openColor", label: "开 颜色", type: "color", def: "#2962FF", group: "线条样式" },
+        { key: "openWidth", label: "开 粗细", type: "int", def: 1, group: "线条样式" },
+
+        { key: "highOn", label: "高 显示", type: "bool", def: true, group: "线条样式" },
+        { key: "highStyle", label: "高 线型", type: "select", def: "solid", group: "线条样式", options: LINE_STYLE_OPTS },
+        { key: "highColor", label: "高 颜色", type: "color", def: "#26A69A", group: "线条样式" },
+        { key: "highWidth", label: "高 粗细", type: "int", def: 1, group: "线条样式" },
+
+        { key: "lowOn", label: "低 显示", type: "bool", def: true, group: "线条样式" },
+        { key: "lowStyle", label: "低 线型", type: "select", def: "solid", group: "线条样式", options: LINE_STYLE_OPTS },
+        { key: "lowColor", label: "低 颜色", type: "color", def: "#EF5350", group: "线条样式" },
+        { key: "lowWidth", label: "低 粗细", type: "int", def: 1, group: "线条样式" },
+
+        { key: "closeOn", label: "收 显示", type: "bool", def: true, group: "线条样式" },
+        { key: "closeStyle", label: "收 线型", type: "select", def: "dashed", group: "线条样式", options: LINE_STYLE_OPTS },
+        { key: "closeColor", label: "收 颜色", type: "color", def: "#2962FF", group: "线条样式" },
+        { key: "closeWidth", label: "收 粗细", type: "int", def: 1, group: "线条样式" }
+      ],
+      series: [],
+      calc: null
+    }
+  };
+
+  function defaultsFor(key) {
+    var o = { on: false, params: {} };
+    (IND[key].params || []).forEach(function (p) { o.params[p.key] = p.def; });
+    return o;
+  }
+  var active = {};
+  var LS_KEY = "market-dashboard:indicator-config:v1";
+  function loadActive() {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) {}
+    Object.keys(IND).forEach(function (k) {
+      active[k] = defaultsFor(k);
+      var s = saved && saved[k];
+      if (!s) return;
+      if (typeof s.on === "boolean") active[k].on = s.on;
+      if (s.params) {
+        Object.keys(s.params).forEach(function (pk) {
+          if (pk in active[k].params) active[k].params[pk] = s.params[pk];
+        });
+      }
+    });
+  }
+  function saveActive() { try { localStorage.setItem(LS_KEY, JSON.stringify(active)); } catch (e) {} }
+  loadActive();
+  var uiState = { ind: {}, group: {} };
+
+  /* ================= indicator math ================= */
+  function sourceVal(c, src) {
+    switch (src) {
+      case "open": return c.open;
+      case "high": return c.high;
+      case "low": return c.low;
+      case "hl2": return (c.high + c.low) / 2;
+      case "hlc3": return (c.high + c.low + c.close) / 3;
+      case "ohlc4": return (c.open + c.high + c.low + c.close) / 4;
+      default: return c.close;
+    }
+  }
+  function smaBy(data, period, src) {
+    period = Math.max(1, period | 0);
+    var out = [], sum = 0;
+    for (var i = 0; i < data.length; i++) {
+      sum += sourceVal(data[i], src);
+      if (i >= period) sum -= sourceVal(data[i - period], src);
+      if (i >= period - 1) out.push({ time: data[i].time, value: sum / period });
+    }
+    return out;
+  }
+  function emaBy(data, period, src) {
+    period = Math.max(1, period | 0);
+    var k = 2 / (period + 1), prev, out = [];
+    for (var i = 0; i < data.length; i++) {
+      var v = sourceVal(data[i], src);
+      prev = i === 0 ? v : v * k + prev * (1 - k);
+      out.push({ time: data[i].time, value: prev });
+    }
+    return out;
+  }
+  function wmaBy(data, period, src) {
+    period = Math.max(1, period | 0);
+    var denom = period * (period + 1) / 2, out = [];
+    for (var i = period - 1; i < data.length; i++) {
+      var s = 0;
+      for (var j = 0; j < period; j++) s += sourceVal(data[i - j], src) * (period - j);
+      out.push({ time: data[i].time, value: s / denom });
+    }
+    return out;
+  }
+  function rmaBy(data, period, src) {
+    period = Math.max(1, period | 0);
+    var out = [], sum = 0, prev;
+    for (var i = 0; i < data.length; i++) {
+      if (i < period - 1) continue;
+      if (i === period - 1) {
+        for (var j = 0; j <= i; j++) sum += sourceVal(data[j], src);
+        prev = sum / period;
+      } else {
+        prev = (prev * (period - 1) + sourceVal(data[i], src)) / period;
+      }
+      out.push({ time: data[i].time, value: prev });
+    }
+    return out;
+  }
+  function maByType(data, period, type, src) {
+    switch (type) {
+      case "EMA": return emaBy(data, period, src);
+      case "WMA": return wmaBy(data, period, src);
+      case "RMA": return rmaBy(data, period, src);
+      default: return smaBy(data, period, src);
+    }
+  }
+  function emaArr(vals, period) {
+    var out = [], k = 2 / (period + 1), prev;
+    for (var i = 0; i < vals.length; i++) { prev = i === 0 ? vals[i] : vals[i] * k + prev * (1 - k); out.push(prev); }
+    return out;
+  }
+  function boll(data, period, mult, src) {
+    period = Math.max(1, period | 0);
+    var up = [], mid = [], low = [];
+    for (var i = period - 1; i < data.length; i++) {
+      var m = 0;
+      for (var j = i - period + 1; j <= i; j++) m += sourceVal(data[j], src);
+      m /= period;
+      var v = 0;
+      for (var k = i - period + 1; k <= i; k++) { var dd = sourceVal(data[k], src) - m; v += dd * dd; }
+      var sd = Math.sqrt(v / period);
+      up.push({ time: data[i].time, value: m + mult * sd });
+      mid.push({ time: data[i].time, value: m });
+      low.push({ time: data[i].time, value: m - mult * sd });
+    }
+    return { up: up, mid: mid, low: low };
+  }
+  function macd(data, fast, slow, sig) {
+    var closes = data.map(function (d) { return d.close; });
+    var ef = emaArr(closes, fast), es = emaArr(closes, slow);
+    var difAll = closes.map(function (_, i) { return ef[i] - es[i]; });
+    var deaAll = emaArr(difAll, sig);
+    var dif = [], dea = [], hist = [];
+    for (var i = slow - 1; i < data.length; i++) {
+      var h = (difAll[i] - deaAll[i]) * 2;
+      dif.push({ time: data[i].time, value: difAll[i] });
+      dea.push({ time: data[i].time, value: deaAll[i] });
+      hist.push({ time: data[i].time, value: h, color: h >= 0 ? COL.up : COL.down });
+    }
+    return { dif: dif, dea: dea, hist: hist };
+  }
+  function rsiArr(data, period) {
+    period = Math.max(1, period | 0);
+    var out = [], ag = 0, al = 0;
+    for (var i = 1; i < data.length; i++) {
+      var ch = data[i].close - data[i - 1].close;
+      var g = Math.max(ch, 0), l = Math.max(-ch, 0);
+      if (i <= period) {
+        ag += g / period; al += l / period;
+        if (i === period) { var rs = al === 0 ? 100 : ag / al; out.push({ time: data[i].time, value: 100 - 100 / (1 + rs) }); }
+      } else {
+        ag = (ag * (period - 1) + g) / period; al = (al * (period - 1) + l) / period;
+        var rr = al === 0 ? 100 : ag / al; out.push({ time: data[i].time, value: 100 - 100 / (1 + rr) });
+      }
+    }
+    return out;
+  }
+  function kdjArr(data, n, m1, m2) {
+    n = Math.max(1, n | 0); m1 = Math.max(1, m1 | 0); m2 = Math.max(1, m2 | 0);
+    var K = [], D = [], J = [], k = 50, d = 50;
+    for (var i = n - 1; i < data.length; i++) {
+      var hh = -Infinity, ll = Infinity;
+      for (var j = i - n + 1; j <= i; j++) { if (data[j].high > hh) hh = data[j].high; if (data[j].low < ll) ll = data[j].low; }
+      var rsv = hh === ll ? 0 : (data[i].close - ll) / (hh - ll) * 100;
+      k = (m1 - 1) / m1 * k + 1 / m1 * rsv;
+      d = (m2 - 1) / m2 * d + 1 / m2 * k;
+      var jv = 3 * k - 2 * d, t = data[i].time;
+      K.push({ time: t, value: k }); D.push({ time: t, value: d }); J.push({ time: t, value: jv });
+    }
+    return { k: K, d: D, j: J };
+  }
+
+  /* ================= 时区显示（北京时间 UTC+8） ================= */
+  var BJ_OFFSET = 8 * 3600;
+  function _p2(n) { return n < 10 ? "0" + n : "" + n; }
+  function bjParts(time) {
+    if (typeof time === "number") {
+      var dt = new Date((time + BJ_OFFSET) * 1000);
+      return { y: dt.getUTCFullYear(), mo: dt.getUTCMonth() + 1, d: dt.getUTCDate(), h: dt.getUTCHours(), mi: dt.getUTCMinutes(), s: dt.getUTCSeconds(), day: false };
+    }
+    return { y: time.year, mo: time.month, d: time.day, h: 0, mi: 0, s: 0, day: true };
+  }
+  function bjTick(time, type) {
+    var t = bjParts(time);
+    if (type === 0) return String(t.y);
+    if (type === 1) return t.mo + "月";
+    if (type === 2) return t.d + "日";
+    if (type === 4) return _p2(t.h) + ":" + _p2(t.mi) + ":" + _p2(t.s);
+    if (t.day) return t.mo + "月" + t.d + "日";
+    return _p2(t.h) + ":" + _p2(t.mi);
+  }
+  function bjTimeFmt(time) {
+    var t = bjParts(time);
+    if (t.day) return t.y + "-" + _p2(t.mo) + "-" + _p2(t.d);
+    return t.y + "-" + _p2(t.mo) + "-" + _p2(t.d) + " " + _p2(t.h) + ":" + _p2(t.mi);
+  }
+  var BJ_LOCALIZATION = { timeFormatter: bjTimeFmt, locale: "zh-CN" };
+
+  /* ================= chart utils ================= */
+  var BASE_CHART = {
+    layout: { background: { type: LightweightCharts.ColorType.Solid, color: "rgba(0,0,0,0)" }, textColor: "#9aa4b2", fontSize: 11 },
+    localization: BJ_LOCALIZATION,
+    grid: { vertLines: { color: "rgba(42,49,60,0.6)" }, horzLines: { color: "rgba(42,49,60,0.6)" } },
+    rightPriceScale: { borderColor: "#232a33" },
+    timeScale: { borderColor: "#232a33", timeVisible: true, secondsVisible: false, tickMarkFormatter: bjTick },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScale: { axisPressedMouseMove: true }
+  };
+  var BASE_SUB = {
+    layout: { background: { color: "#161b22" }, textColor: "#9aa4b2", fontSize: 10 },
+    localization: BJ_LOCALIZATION,
+    grid: { vertLines: { color: "rgba(42,49,60,0.6)" }, horzLines: { color: "rgba(42,49,60,0.6)" } },
+    rightPriceScale: { borderColor: "#232a33", scaleMargins: { top: 0.15, bottom: 0.1 } },
+    timeScale: { borderColor: "#232a33", timeVisible: true, secondsVisible: false, tickMarkFormatter: bjTick },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScale: { axisPressedMouseMove: true }
+  };
+
+  var charts = [];
+
+  function lineOpts(c, dash) {
+    return { color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, lineStyle: dash ? 2 : 0 };
+  }
+  function makeSeries(chart, spec) {
+    if (spec.type === "hist") return chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+    return chart.addLineSeries(lineOpts(spec.color, spec.dash));
+  }
+  function syncPair(a, b) {
+    var lock = false;
+    function link(src, dst) {
+      src.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
+        if (lock || !range) return;
+        lock = true;
+        try { dst.timeScale().setVisibleLogicalRange(range); } catch (e) {}
+        lock = false;
+      });
+    }
+    link(a, b); link(b, a);
+  }
+
+  /* ================= sessions (交易时段) ================= */
+  function hexToRgba(hex, a) {
+    hex = String(hex || "").replace("#", "");
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    if (hex.length !== 6) return "rgba(41,98,255," + a + ")";
+    var n = parseInt(hex, 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+  }
+  function parseHM(s) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim());
+    if (!m) return null;
+    var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+    if (h > 23 || mi > 59) return null;
+    return h * 60 + mi;
+  }
+  var _tzFmtCache = {};
+  function tzFmt(tz) {
+    if (_tzFmtCache[tz]) return _tzFmtCache[tz];
+    var f;
+    try { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }); }
+    catch (e) { f = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", hour12: false }); }
+    _tzFmtCache[tz] = f; return f;
+  }
+  function tzMinutesFor(entry, tz) {
+    var d = entry.data;
+    if (!entry._tzCache) entry._tzCache = {};
+    var key = d.length + ":" + d[0].time + ":" + d[d.length - 1].time;
+    var c = entry._tzCache[tz];
+    if (c && c.key === key) return c.arr;
+    var f = tzFmt(tz), arr = new Array(d.length);
+    for (var i = 0; i < d.length; i++) {
+      var parts = f.formatToParts(new Date(d[i].time * 1000)), hh = 0, mm = 0;
+      for (var j = 0; j < parts.length; j++) {
+        if (parts[j].type === "hour") hh = parseInt(parts[j].value, 10) % 24;
+        else if (parts[j].type === "minute") mm = parseInt(parts[j].value, 10);
+      }
+      arr[i] = hh * 60 + mm;
+    }
+    entry._tzCache[tz] = { key: key, arr: arr };
+    return arr;
+  }
+  function inWindow(m, start, end) {
+    if (start === end) return false;
+    if (start < end) return m >= start && m < end;
+    return m >= start || m < end;
+  }
+  function readSessions(p) {
+    var out = [];
+    for (var i = 1; i <= 3; i++) {
+      if (!p["s" + i + "on"]) continue;
+      var st = parseHM(p["s" + i + "start"]), en = parseHM(p["s" + i + "end"]);
+      if (st === null || en === null) continue;
+      out.push({ name: p["s" + i + "name"] || ("时段" + i), start: st, end: en, tz: p["s" + i + "tz"] || "UTC", color: p["s" + i + "color"] || "#2962FF" });
+    }
+    return out;
+  }
+  function drawSessions(entry) {
+    var el = entry.sessionsEl;
+    if (!el) return;
+    el.innerHTML = "";
+    if (!entry.sessionsOn) return;
+    if (state.interval === "1d") return;
+    var d = entry.data;
+    if (!d || d.length < 2) return;
+    var p = active.sessions.params;
+    var sessions = readSessions(p);
+    if (!sessions.length || !entry.mainWrap) return;
+
+    var ts = entry.mainChart.timeScale();
+    var vr = null;
+    try { vr = ts.getVisibleLogicalRange(); } catch (e) {}
+    if (!vr) return;
+    var plotW = ts.width ? ts.width() : entry.mainWrap.clientWidth;
+    var axisH = 0;
+    try { axisH = ts.height() || 0; } catch (e) {}
+    var boxH = entry.mainWrap.clientHeight - axisH;
+    if (boxH <= 0) boxH = entry.mainWrap.clientHeight;
+    function coord(i) { try { var c = ts.logicalToCoordinate(i); return (c === null || !isFinite(c)) ? null : c; } catch (e) { return null; } }
+
+    sessions.forEach(function (se) {
+      var mins = tzMinutesFor(entry, se.tz);
+      var runs = [], cur = null;
+      for (var i = 0; i < d.length; i++) {
+        if (inWindow(mins[i], se.start, se.end)) { if (cur) cur.i1 = i; else cur = { i0: i, i1: i }; }
+        else if (cur) { runs.push(cur); cur = null; }
+      }
+      if (cur) runs.push(cur);
+
+      var op = Number(p.opacity);
+      if (!isFinite(op)) op = 12;
+      op = Math.max(0, Math.min(100, op));
+      var fill = hexToRgba(se.color, op / 100);
+      var vspan = Math.max(1, vr.to - vr.from);
+      runs.forEach(function (r) {
+        if (r.i1 < vr.from || r.i0 > vr.to) return;
+        var c0 = coord(r.i0), c1 = coord(r.i1);
+        var cn = coord(r.i0 + 1), bs = null;
+        if (cn !== null && c0 !== null) bs = cn - c0;
+        else if (c0 !== null && c1 !== null && r.i1 > r.i0) bs = (c1 - c0) / (r.i1 - r.i0);
+        if (bs === null || !isFinite(bs) || bs <= 0) bs = plotW / vspan;
+        var x0 = (r.i0 < vr.from) ? 0 : (c0 === null ? 0 : c0 - bs / 2);
+        var x1 = (r.i1 + 1 > vr.to) ? plotW : (c1 === null ? plotW : c1 + bs / 2);
+        x0 = Math.max(0, x0); x1 = Math.min(plotW, x1);
+        var w = x1 - x0;
+        if (w < 0.5) return;
+
+        var first = d[r.i0], last = d[r.i1], sum = 0, hh = -Infinity, ll = Infinity;
+        for (var k = r.i0; k <= r.i1; k++) { sum += d[k].close; if (d[k].high > hh) hh = d[k].high; if (d[k].low < ll) ll = d[k].low; }
+        var avg = sum / (r.i1 - r.i0 + 1);
+
+        var yA = null, yB = null;
+        try { yA = entry.candles.priceToCoordinate(hh); } catch (e) {}
+        try { yB = entry.candles.priceToCoordinate(ll); } catch (e) {}
+        if (yA === null || yB === null || !isFinite(yA) || !isFinite(yB)) return;
+        var yTop = Math.min(yA, yB), yBot = Math.max(yA, yB);
+        yTop = Math.max(0, yTop); yBot = Math.min(boxH, yBot);
+        var bh = yBot - yTop;
+        if (bh < 1) return;
+
+        var box = document.createElement("div");
+        box.className = "sbox";
+        box.style.left = x0 + "px"; box.style.top = yTop + "px";
+        box.style.width = w + "px"; box.style.height = bh + "px";
+        box.style.background = fill;
+        el.appendChild(box);
+        if (p.showName) {
+          var lb = document.createElement("div");
+          lb.className = "slabel"; lb.textContent = se.name; lb.style.color = se.color;
+          var lop = Number(p.labelOpacity);
+          if (!isFinite(lop)) lop = 100;
+          lop = Math.max(0, Math.min(100, lop));
+          lb.style.opacity = (lop / 100);
+          var ly = yBot + 2;
+          if (ly + 13 > boxH) ly = yTop - 13;
+          if (ly < 0) ly = yBot + 2;
+          lb.style.left = (x0 + 4) + "px"; lb.style.top = ly + "px";
+          el.appendChild(lb);
+        }
+        function addLine(price) {
+          var y = null;
+          try { y = entry.candles.priceToCoordinate(price); } catch (e) {}
+          if (y === null || !isFinite(y) || y < yTop || y > yBot) return;
+          var ln = document.createElement("div");
+          ln.className = "sline";
+          ln.style.left = x0 + "px"; ln.style.width = w + "px";
+          ln.style.top = y + "px"; ln.style.borderTopColor = se.color;
+          el.appendChild(ln);
+        }
+        if (p.showOC) { addLine(first.open); addLine(last.close); }
+        if (p.showAvg) addLine(avg);
+
+        if (p.showAvg || p.showRange) {
+          var txt = [];
+          if (p.showAvg) txt.push("均 " + fmt(avg, 2));
+          if (p.showRange) txt.push("区间 " + fmt(hh - ll, 2));
+          var nd = document.createElement("div");
+          nd.className = "snode"; nd.textContent = txt.join("   ");
+          nd.style.color = se.color; nd.style.left = (x0 + 4) + "px"; nd.style.top = yTop + "px";
+          el.appendChild(nd);
+        }
+      });
+    });
+  }
+
+  /* ================= previous OHLC (前一时段 O/H/L/C) ================= */
+  var TF_SECONDS = { "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+  var INTERVAL_SECONDS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+  var OHLC_LABELS = { open: "开", high: "高", low: "低", close: "收" };
+
+  function aggregatePeriods(data, secs) {
+    var out = [], cur = null;
+    for (var i = 0; i < data.length; i++) {
+      var key = Math.floor((data[i].time + BJ_OFFSET) / secs);
+      if (!cur || cur.key !== key) {
+        if (cur) out.push(cur);
+        cur = { key: key, i0: i, i1: i, open: data[i].open, high: data[i].high, low: data[i].low, close: data[i].close };
+      } else {
+        cur.i1 = i;
+        if (data[i].high > cur.high) cur.high = data[i].high;
+        if (data[i].low < cur.low) cur.low = data[i].low;
+        cur.close = data[i].close;
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function drawOHLC(entry) {
+    var el = entry.ohlcEl;
+    if (!el) return;
+    el.innerHTML = "";
+    if (!entry.ohlcOn) return;
+    var d = entry.data;
+    if (!d || d.length < 2) return;
+    var p = active.prevOHLC.params;
+
+    var tf = TF_SECONDS[p.tf] ? p.tf : "1d";
+    var secs = TF_SECONDS[tf];
+    var chartSecs = INTERVAL_SECONDS[state.interval] || 900;
+    if (chartSecs > secs) return; // 图表周期比目标周期更粗，无法聚合
+
+    var periods = aggregatePeriods(d, secs);
+    if (!periods.length) return;
+    var off = Math.max(1, parseInt(p.offset, 10) || 1);
+    var shift = off - 1; // 用第 (k-shift) 个周期的数值，画在第 k 个周期的时间段上
+
+    var ts = entry.mainChart.timeScale();
+    var vr = null;
+    try { vr = ts.getVisibleLogicalRange(); } catch (e) {}
+    if (!vr) return;
+    var plotW = ts.width ? ts.width() : entry.mainWrap.clientWidth;
+    var axisH = 0;
+    try { axisH = ts.height() || 0; } catch (e) {}
+    var boxH = entry.mainWrap.clientHeight - axisH;
+    if (boxH <= 0) boxH = entry.mainWrap.clientHeight;
+    function coord(i) { try { var c = ts.logicalToCoordinate(i); return (c === null || !isFinite(c)) ? null : c; } catch (e) { return null; } }
+    function yOf(v) { try { var y = entry.candles.priceToCoordinate(v); return (y === null || !isFinite(y)) ? null : y; } catch (e) { return null; } }
+
+    var fo = Number(p.fillOpacity);
+    if (!isFinite(fo)) fo = 80;
+    fo = Math.max(0, Math.min(100, fo));
+    var fill = hexToRgba(p.fillColor || "#c0c0c0", fo / 100);
+
+    // 收集所有可见周期（每个周期一组 O/H/L/C）
+    var items = [];
+    for (var k = 0; k < periods.length; k++) {
+      var per = periods[k];
+      if (per.i1 < vr.from || per.i0 > vr.to) continue;
+      var src = periods[k - shift];
+      if (!src) continue;
+      var c0 = coord(per.i0), c1 = coord(per.i1), cn = coord(per.i0 + 1), bs = null;
+      if (cn !== null && c0 !== null) bs = cn - c0;
+      else if (c0 !== null && c1 !== null && per.i1 > per.i0) bs = (c1 - c0) / (per.i1 - per.i0);
+      if (bs === null || !isFinite(bs) || bs <= 0) bs = plotW / Math.max(1, vr.to - vr.from);
+      var x0 = (per.i0 < vr.from) ? 0 : (c0 === null ? 0 : c0 - bs / 2);
+      var x1 = (per.i1 + 1 > vr.to) ? plotW : (c1 === null ? plotW : c1 + bs / 2);
+      x0 = Math.max(0, x0); x1 = Math.min(plotW, x1);
+      if (p.extend) x1 = plotW;
+      if (x1 - x0 < 0.5) continue;
+      items.push({ x0: x0, x1: x1, src: src });
+    }
+    if (!items.length) return;
+
+    // 先画填充（高~低区间），再画线，避免相邻填充盖住线
+    if (p.fillOn) {
+      items.forEach(function (it) {
+        var yh = yOf(it.src.high), yl = yOf(it.src.low);
+        if (yh === null || yl === null) return;
+        var yTop = Math.max(0, Math.min(yh, yl));
+        var yBot = Math.min(boxH, Math.max(yh, yl));
+        if (yBot - yTop < 1) return;
+        var fdiv = document.createElement("div");
+        fdiv.className = "ohlc-fill";
+        fdiv.style.left = it.x0 + "px"; fdiv.style.width = (it.x1 - it.x0) + "px";
+        fdiv.style.top = yTop + "px"; fdiv.style.height = (yBot - yTop) + "px";
+        fdiv.style.background = fill;
+        el.appendChild(fdiv);
+      });
+    }
+
+    var KEYS = ["open", "high", "low", "close"].filter(function (k) { return p[k + "On"] !== false; });
+    function lineStyle(key) {
+      var sv = String(p[key + "Style"] || "solid");
+      return sv === "dashed" ? "dashed" : (sv === "dotted" ? "dotted" : "solid");
+    }
+    items.forEach(function (it) {
+      KEYS.forEach(function (key) {
+        var y = yOf(it.src[key]);
+        if (y === null) return;
+        var ldiv = document.createElement("div");
+        ldiv.className = "ohlc-line";
+        ldiv.style.left = it.x0 + "px"; ldiv.style.width = (it.x1 - it.x0) + "px";
+        ldiv.style.top = y + "px";
+        ldiv.style.borderTopWidth = Math.max(1, parseInt(p[key + "Width"], 10) || 1) + "px";
+        ldiv.style.borderTopStyle = lineStyle(key);
+        ldiv.style.borderTopColor = p[key + "Color"] || "#888888";
+        el.appendChild(ldiv);
+      });
+    });
+
+    // 标签只标最后一个周期，避免刷屏
+    if (p.showLabel && items.length) {
+      var last = items[items.length - 1];
+      KEYS.forEach(function (key) {
+        var y = yOf(last.src[key]);
+        if (y === null) return;
+        var lab = document.createElement("div");
+        lab.className = "ohlc-label";
+        lab.textContent = OHLC_LABELS[key] + " " + fmt(last.src[key], priceDp(last.src[key]));
+        lab.style.color = p[key + "Color"] || "#888888";
+        lab.style.left = (last.x0 + 3) + "px"; lab.style.top = (y - 13) + "px";
+        el.appendChild(lab);
+      });
+    }
+  }
+
+  function redrawOverlays(entry) {
+    if (entry.sessionsOn) drawSessions(entry);
+    drawOHLC(entry);
+  }
+
+  function buildIndicators(entry) {
+    var range = null;
+    try { range = entry.mainChart.timeScale().getVisibleLogicalRange(); } catch (e) {}
+
+    (entry.mainOverlays || []).forEach(function (o) { o.series.forEach(function (s) { try { entry.mainChart.removeSeries(s); } catch (e) {} }); });
+    entry.mainOverlays = [];
+    (entry.subPanes || []).forEach(function (sp) { try { sp.chart.remove(); } catch (e) {} });
+    entry.subContainer.innerHTML = "";
+    entry.subPanes = [];
+    if (entry.sessionsEl) { entry.sessionsEl.innerHTML = ""; entry.sessionsOn = false; }
+    if (entry.ohlcEl) { entry.ohlcEl.innerHTML = ""; entry.ohlcOn = false; }
+
+    Object.keys(IND).forEach(function (key) {
+      var def = IND[key];
+      if (def.pane === "main") {
+        if (def.type === "sessions") { if (active[key].on) entry.sessionsOn = true; return; }
+        if (def.type === "prevOHLC") { if (active[key].on) entry.ohlcOn = true; return; }
+        if (!active[key].on) return;
+        var series = def.series.map(function (sp) { return makeSeries(entry.mainChart, sp); });
+        entry.mainOverlays.push({ def: def, key: key, series: series });
+      } else {
+        if (!active[key].on) return;
+        var el = document.createElement("div");
+        el.className = "chart-sub";
+        entry.subContainer.appendChild(el);
+        var chart = LightweightCharts.createChart(el, Object.assign({}, BASE_SUB, { width: el.clientWidth || 600, height: el.clientHeight || 120 }));
+        var s2 = def.series.map(function (sp) { return makeSeries(chart, sp); });
+        (function (el2, chart2) {
+          new ResizeObserver(function () { if (el2.clientWidth > 0) chart2.applyOptions({ width: el2.clientWidth, height: el2.clientHeight }); }).observe(el2);
+        })(el, chart);
+        syncPair(entry.mainChart, chart);
+        entry.subPanes.push({ def: def, key: key, chart: chart, series: s2, el: el });
+      }
+    });
+
+    applyIndicatorData(entry);
+    if (range) { try { entry.mainChart.timeScale().setVisibleLogicalRange(range); } catch (e) {} }
+    redrawOverlays(entry);
+  }
+
+  function applyIndicatorData(entry) {
+    var d = entry.data;
+    if (!d || !d.length) return;
+    entry.mainOverlays.forEach(function (o) {
+      var data = o.def.calc(d, active[o.key].params);
+      o.series.forEach(function (s, i) { s.setData(data[i] || []); });
+    });
+    entry.subPanes.forEach(function (sp) {
+      var data = sp.def.calc(d, active[sp.key].params);
+      sp.series.forEach(function (s, i) { s.setData(data[i] || []); });
+    });
+  }
+
+  function rebuildAllIndicators() { charts.forEach(buildIndicators); saveActive(); }
+
+  /* ================= data ================= */
+  function fmt(n, dp) {
+    if (n === null || n === undefined || isNaN(n)) return "--";
+    var d = dp === undefined ? 2 : dp;
+    return Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+  function priceDp(p) { if (p >= 1000) return 1; if (p >= 1) return 2; return 5; }
+
+  function toCandles(raw) {
+    return (raw || []).map(function (c) {
+      return { time: Number(c.t), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c), volume: Number(c.v) };
+    }).filter(function (c) { return isFinite(c.time) && isFinite(c.close); });
+  }
+
+  function loadCandles(entry) {
+    var url = API + "/candlesticks?contract=" + entry.inst.key + "&interval=" + state.interval + "&limit=" + BARS;
+    return fetch(url, { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+    }).then(function (raw) {
+      var data = toCandles(raw);
+      entry.data = data;
+      entry.candles.setData(data);
+      applyIndicatorData(entry);
+      try { entry.mainChart.timeScale().fitContent(); } catch (e) {}
+      redrawOverlays(entry);
+    });
+  }
+  function loadLatestCandle(entry) {
+    var url = API + "/candlesticks?contract=" + entry.inst.key + "&interval=" + state.interval + "&limit=2";
+    return fetch(url, { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+    }).then(function (raw) {
+      var data = toCandles(raw);
+      if (!data.length || !entry.data.length) return;
+      var last = data[data.length - 1];
+      entry.candles.update(last);
+      var arr = entry.data.slice();
+      if (arr[arr.length - 1].time === last.time) arr[arr.length - 1] = last; else arr.push(last);
+      entry.data = arr;
+      applyIndicatorData(entry);
+      redrawOverlays(entry);
+    });
+  }
+  function loadTicker(entry) {
+    var url = API + "/tickers?contract=" + entry.inst.key;
+    return fetch(url, { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+    }).then(function (arr) {
+      var t = arr && arr[0]; if (!t) return;
+      var last = Number(t.last), dp = priceDp(last), chg = Number(t.change_percentage);
+      var els = entry.panel;
+      els.querySelector('[data-role="price"]').textContent = fmt(last, dp);
+      var chgEl = els.querySelector('[data-role="chg"]');
+      chgEl.textContent = (chg >= 0 ? "+" : "") + fmt(chg, 2) + "%";
+      chgEl.className = "chg " + (chg >= 0 ? "up" : "down");
+      els.querySelector('[data-role="high"]').textContent = fmt(Number(t.high_24h), dp);
+      els.querySelector('[data-role="low"]').textContent = fmt(Number(t.low_24h), dp);
+      els.querySelector('[data-role="vol"]').textContent = fmt(Number(t.volume_24h_settle) / 1e6, 1) + "M";
+      els.querySelector('[data-role="idx"]').textContent = fmt(Number(t.index_price), dp);
+    });
+  }
+
+  function setStatus(ok) {
+    var dot = document.getElementById("statusDot"), txt = document.getElementById("statusText");
+    dot.classList.toggle("off", !ok);
+    txt.textContent = ok ? "已连接 · " + new Date().toLocaleTimeString("zh-CN") : "连接异常";
+  }
+  function refreshLoop() {
+    var errors = 0, tasks = [];
+    charts.forEach(function (e) {
+      tasks.push(loadTicker(e).catch(function () { errors++; }));
+      tasks.push(loadLatestCandle(e).catch(function () { errors++; }));
+    });
+    Promise.all(tasks).then(function () { setStatus(errors === 0); });
+  }
+  function reloadAll() { charts.forEach(function (e) { loadCandles(e).catch(function () {}); }); refreshLoop(); }
+
+  /* ================= UI ================= */
+  function selectInterval(key) {
+    if (state.interval === key) return;
+    state.interval = key;
+    Array.prototype.forEach.call(document.getElementById("tfGroup").children, function (c) {
+      c.classList.toggle("active", c.dataset.key === key);
+    });
+    document.getElementById("tfSelect").value = key;
+    reloadAll();
+  }
+
+  function buildToolbar() {
+    var tf = document.getElementById("tfGroup");
+    var sel = document.getElementById("tfSelect");
+    INTERVALS.forEach(function (iv) {
+      var b = document.createElement("button");
+      b.textContent = iv.label; b.dataset.key = iv.key;
+      if (iv.key === state.interval) b.classList.add("active");
+      b.addEventListener("click", function () { selectInterval(iv.key); });
+      tf.appendChild(b);
+
+      var o = document.createElement("option");
+      o.value = iv.key; o.textContent = iv.label;
+      sel.appendChild(o);
+    });
+    sel.value = state.interval;
+    sel.addEventListener("change", function () { selectInterval(sel.value); });
+    document.getElementById("btnSettings").addEventListener("click", openModal);
+    document.getElementById("btnClose").addEventListener("click", closeModal);
+    document.getElementById("btnReset").addEventListener("click", function () {
+      Object.keys(IND).forEach(function (k) { active[k] = defaultsFor(k); });
+      renderModal(); rebuildAllIndicators();
+    });
+    document.getElementById("mask").addEventListener("click", function (e) { if (e.target.id === "mask") closeModal(); });
+  }
+
+  function openModal() { renderModal(); document.getElementById("mask").classList.add("show"); }
+  function closeModal() { document.getElementById("mask").classList.remove("show"); }
+
+  function renderModal() {
+    var body = document.getElementById("modalBody");
+    body.innerHTML = "";
+
+    function makeGroupHeader(gname) {
+      var gh = document.createElement("div");
+      gh.className = "param-group";
+      gh.appendChild(document.createTextNode(gname));
+      return gh;
+    }
+
+    Object.keys(IND).forEach(function (key) {
+      var def = IND[key];
+      var row = document.createElement("div");
+      row.className = "ind-row" + (uiState.ind[key] === true ? "" : " collapsed");
+      var title = document.createElement("div");
+      title.className = "ind-title";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = !!active[key].on;
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function () { active[key].on = cb.checked; rebuildAllIndicators(); });
+      title.appendChild(cb);
+      title.appendChild(document.createTextNode(" " + def.name + " "));
+      var tag = document.createElement("em");
+      tag.textContent = def.pane === "main" ? "主图" : "副图";
+      title.appendChild(tag);
+      var caret = document.createElement("span"); caret.className = "caret";
+      title.appendChild(caret);
+      title.addEventListener("click", function () {
+        var col = row.classList.toggle("collapsed");
+        uiState.ind[key] = !col;
+      });
+      row.appendChild(title);
+
+      if (def.params && def.params.length) {
+        var indBody = document.createElement("div");
+        indBody.className = "ind-body";
+        var ps = document.createElement("div");
+        ps.className = "params";
+        var lastGroup, curBox;
+        def.params.forEach(function (p) {
+          var gname = p.group || "";
+          if (curBox === undefined || gname !== lastGroup) {
+            lastGroup = gname;
+            if (gname) ps.appendChild(makeGroupHeader(gname));
+            curBox = document.createElement("div");
+            curBox.className = "param-box";
+            ps.appendChild(curBox);
+          }
+          var lab = document.createElement("label");
+          var cur = active[key].params[p.key];
+          if (p.type === "bool") {
+            var cbx = document.createElement("input");
+            cbx.type = "checkbox"; cbx.checked = !!cur;
+            cbx.addEventListener("change", function () { active[key].params[p.key] = cbx.checked; rebuildAllIndicators(); });
+            lab.appendChild(cbx);
+            lab.appendChild(document.createTextNode(" " + p.label));
+          } else {
+            lab.appendChild(document.createTextNode(p.label + " "));
+            var ctl;
+            if (p.type === "select") {
+              ctl = document.createElement("select"); ctl.className = "p-select";
+              (p.options || []).forEach(function (o) {
+                var opt = document.createElement("option");
+                opt.value = o.value; opt.textContent = o.label; ctl.appendChild(opt);
+              });
+              ctl.value = cur;
+              ctl.addEventListener("change", function () { active[key].params[p.key] = ctl.value; rebuildAllIndicators(); });
+            } else if (p.type === "color") {
+              ctl = document.createElement("input"); ctl.type = "color"; ctl.value = cur;
+              ctl.addEventListener("change", function () { active[key].params[p.key] = ctl.value; rebuildAllIndicators(); });
+            } else if (p.type === "time") {
+              ctl = document.createElement("input"); ctl.type = "time"; ctl.value = cur;
+              ctl.addEventListener("change", function () { active[key].params[p.key] = ctl.value; rebuildAllIndicators(); });
+            } else if (p.type === "text") {
+              ctl = document.createElement("input"); ctl.type = "text"; ctl.value = cur;
+              ctl.addEventListener("change", function () { active[key].params[p.key] = ctl.value; rebuildAllIndicators(); });
+            } else {
+              ctl = document.createElement("input");
+              ctl.type = "number"; ctl.step = p.type === "float" ? "0.1" : "1"; ctl.min = "1";
+              ctl.value = cur;
+              ctl.addEventListener("change", function () {
+                var v = parseFloat(ctl.value);
+                if (isNaN(v) || v <= 0) { ctl.value = active[key].params[p.key]; return; }
+                active[key].params[p.key] = v; rebuildAllIndicators();
+              });
+            }
+            lab.appendChild(ctl);
+          }
+          curBox.appendChild(lab);
+        });
+        indBody.appendChild(ps);
+        row.appendChild(indBody);
+      }
+      body.appendChild(row);
+    });
+  }
+
+  function resizeEntry(entry) {
+    var mainEl = entry.panel.querySelector('[data-role="main"]');
+    if (mainEl && mainEl.clientWidth > 0) {
+      entry.mainChart.applyOptions({ width: mainEl.clientWidth, height: mainEl.clientHeight });
+    }
+    entry.subPanes.forEach(function (sp) {
+      if (sp.el.clientWidth > 0) sp.chart.applyOptions({ width: sp.el.clientWidth, height: sp.el.clientHeight });
+    });
+    redrawOverlays(entry);
+  }
+
+  function setActiveInst(i) {
+    state.activeInst = i;
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) {
+      b.classList.toggle("active", Number(b.dataset.idx) === i);
+    });
+    charts.forEach(function (e, idx) { e.panel.classList.toggle("active", idx === i); });
+    var e = charts[i];
+    if (e) requestAnimationFrame(function () { resizeEntry(e); });
+  }
+
+  function buildTabs() {
+    var tabs = document.getElementById("tabs");
+    tabs.innerHTML = "";
+    INSTRUMENTS.forEach(function (inst, idx) {
+      var b = document.createElement("button");
+      b.textContent = inst.label.split("/")[0]; b.dataset.idx = idx;
+      if (idx === state.activeInst) b.classList.add("active");
+      b.addEventListener("click", function () { if (state.activeInst !== idx) setActiveInst(idx); });
+      tabs.appendChild(b);
+    });
+  }
+
+  function buildPanels() {
+    var main = document.getElementById("main");
+    main.innerHTML = "";
+    charts = [];
+    INSTRUMENTS.forEach(function (inst, idx) {
+      var panel = document.createElement("div");
+      panel.className = "panel" + (idx === state.activeInst ? " active" : "");
+      panel.innerHTML =
+        '<div class="panel-head">' +
+          '<span class="sym">' + inst.label + '<small>' + inst.sub + '</small></span>' +
+          '<span class="price" data-role="price">--</span>' +
+          '<span class="chg" data-role="chg">--</span>' +
+          '<span class="stats">' +
+            '<span>24H高<b data-role="high">--</b></span>' +
+            '<span>24H低<b data-role="low">--</b></span>' +
+            '<span>24H量<b data-role="vol">--</b></span>' +
+            '<span>指数<b data-role="idx">--</b></span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="main-wrap">' +
+          '<div class="sessions-overlay" data-role="sessions"></div>' +
+          '<div class="sessions-overlay" data-role="ohlc"></div>' +
+          '<div class="chart-main" data-role="main"></div>' +
+          '<div class="scale-btns">' +
+            '<button data-role="btnA" class="active" title="自动缩放">A</button>' +
+            '<button data-role="btnL" title="对数坐标">L</button>' +
+          '</div>' +
+        '</div>' +
+        '<div data-role="subs"></div>';
+      main.appendChild(panel);
+
+      var mainEl = panel.querySelector('[data-role="main"]');
+      var subEl = panel.querySelector('[data-role="subs"]');
+      var mainWrap = panel.querySelector('.main-wrap');
+      var sessionsEl = panel.querySelector('[data-role="sessions"]');
+      var ohlcEl = panel.querySelector('[data-role="ohlc"]');
+      var mc = LightweightCharts.createChart(mainEl, Object.assign({}, BASE_CHART, { width: mainEl.clientWidth || 600, height: mainEl.clientHeight || 520 }));
+      var candles = mc.addCandlestickSeries({ upColor: COL.up, downColor: COL.down, borderUpColor: COL.up, borderDownColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
+      new ResizeObserver(function () { if (mainEl.clientWidth > 0) { mc.applyOptions({ width: mainEl.clientWidth, height: mainEl.clientHeight }); redrawOverlays(entry); } }).observe(mainEl);
+
+      var btnA = panel.querySelector('[data-role="btnA"]');
+      var btnL = panel.querySelector('[data-role="btnL"]');
+      var entry = {
+        inst: inst, panel: panel, data: [], mainChart: mc, candles: candles,
+        subContainer: subEl, mainOverlays: [], subPanes: [], autoScale: true, logScale: false,
+        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, ohlcEl: ohlcEl, ohlcOn: false
+      };
+      mc.timeScale().subscribeVisibleLogicalRangeChange(function () { redrawOverlays(entry); });
+      btnA.addEventListener("click", function () {
+        entry.autoScale = !entry.autoScale;
+        mc.priceScale("right").applyOptions({ autoScale: entry.autoScale });
+        btnA.classList.toggle("active", entry.autoScale);
+      });
+      btnL.addEventListener("click", function () {
+        entry.logScale = !entry.logScale;
+        mc.priceScale("right").applyOptions({
+          mode: entry.logScale ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal
+        });
+        btnL.classList.toggle("active", entry.logScale);
+      });
+      charts.push(entry);
+    });
+  }
+
+  buildToolbar();
+  buildTabs();
+  buildPanels();
+  rebuildAllIndicators();
+  reloadAll();
+  setActiveInst(state.activeInst);
+  setInterval(refreshLoop, REFRESH_MS);
+})();
+</script>
+</body>
+</html>

@@ -37,8 +37,11 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 BJ_OFFSET = 8 * 3600
 BASE_INTERVAL = "1h"
 CANDLE_LIMIT = 1000
-TF_SECONDS = {"1h": 3600, "4h": 14400, "1d": 86400}
-TF_NAME = {"1h": "1小时", "4h": "4小时", "1d": "日"}
+# 15m/1h/4h 的北京时间边界与 UTC 边界重合，可直接取原生周期；
+# 日线需按北京时间聚合，故统一用 1h 聚合（见 prev_ohlc_level）。
+NATIVE_TFS = {"15m"}
+TF_SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+TF_NAME = {"15m": "15分钟", "1h": "1小时", "4h": "4小时", "1d": "日"}
 FIELD_NAME = {"open": "开", "high": "高", "low": "低", "close": "收"}
 
 
@@ -101,7 +104,8 @@ def prev_ohlc_level(contract, tf, offset, field):
         raise ValueError(f"unsupported field: {field}")
     if offset < 2:
         raise ValueError("breakout 需要 offset >= 2（当前正在形成的周期不适用）")
-    periods = aggregate_periods(get_candles(contract), secs)
+    base = tf if tf in NATIVE_TFS else BASE_INTERVAL
+    periods = aggregate_periods(get_candles(contract, interval=base), secs)
     idx = len(periods) - offset
     if idx < 0:
         raise ValueError(f"offset {offset} 超出可用周期数 {len(periods)}")
