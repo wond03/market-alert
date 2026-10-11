@@ -2,8 +2,10 @@
 """Market alert checker: polls Gate.io futures data, evaluates rules from
 config.json, and pushes alerts to Telegram.
 
-Runs on GitHub Actions on a schedule. Keeps a small state file so each rule
-fires only once per crossing (re-arms after price returns to the other side).
+Runs on GitHub Actions (a 5-minute schedule plus an external trigger that can
+call it more often). Each run scans the 1-minute candles that appeared since
+the previous run, so a brief crossing between runs is still caught; each rule
+fires at most once per crossing (the state records the last candle processed).
 
 Two rule types are supported:
   - fixed price:  {"symbol","label","type":"cross_up"|"cross_down","price"}
@@ -36,6 +38,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 # 与看盘页保持一致：北京时间对齐；聚合基准周期用 1h
 BJ_OFFSET = 8 * 3600
 BASE_INTERVAL = "1h"
+SCAN_INTERVAL = "1m"
 CANDLE_LIMIT = 1000
 # 15m/1h/4h 的北京时间边界与 UTC 边界重合，可直接取原生周期；
 # 日线需按北京时间聚合，故统一用 1h 聚合（见 prev_ohlc_level）。
@@ -54,12 +57,6 @@ def http_json(url, timeout=20):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def get_price(contract):
-    data = http_json(f"{BASE}/futures/usdt/tickers?contract={contract}")
-    row = data[0] if isinstance(data, list) else data
-    return float(row["last"])
-
-
 def get_candles(contract, interval=BASE_INTERVAL, limit=CANDLE_LIMIT):
     url = (
         f"{BASE}/futures/usdt/candlesticks"
@@ -67,6 +64,32 @@ def get_candles(contract, interval=BASE_INTERVAL, limit=CANDLE_LIMIT):
     )
     data = http_json(url)
     return data if isinstance(data, list) else []
+
+
+def scan_cross(candles, level, prev_side, is_up):
+    """Walk 1m candles in order and return (fired_ts, fired_price, final_side).
+
+    Fires on the first transition into the watched side. `prev_side` is the
+    side recorded on the previous run; only candles newer than that run are
+    passed in, so the same crossing is never counted twice.
+    """
+    side = prev_side
+    fired_ts = None
+    fired_price = None
+    for cd in candles:
+        try:
+            t = int(cd["t"])
+            close = float(cd["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        cur = "above" if close >= level else "below"
+        if side is not None and cur != side and fired_ts is None:
+            if (is_up and side == "below" and cur == "above") or (
+                (not is_up) and side == "above" and cur == "below"
+            ):
+                fired_ts, fired_price = t, close
+        side = cur
+    return fired_ts, fired_price, side
 
 
 def aggregate_periods(candles, secs):
@@ -212,12 +235,13 @@ def main():
         print("no rules configured; nothing to do")
         return 0
 
-    state = load_json(STATE_PATH, {"rules": {}})
+    state = load_json(STATE_PATH, {"rules": {}, "checked": {}})
     seen = state.setdefault("rules", {})
+    checked = state.setdefault("checked", {})  # symbol -> 已处理到的最新 1m K 线时间
     changed = False
     messages = []
 
-    price_cache = {}
+    candle_cache = {}
     for rule in rules:
         symbol = rule["symbol"]
         label = rule.get("label", symbol)
@@ -229,17 +253,30 @@ def main():
             print(f"!! resolve {rid} failed: {e}")
             continue
 
-        if symbol not in price_cache:
+        if symbol not in candle_cache:
+            sym_checked = checked.get(symbol)
+            rows, newest = [], None
             try:
-                price_cache[symbol] = get_price(symbol)
+                data = get_candles(symbol, interval=SCAN_INTERVAL)
             except Exception as e:  # noqa: BLE001
                 print(f"!! fetch {symbol} failed: {e}")
-                price_cache[symbol] = None
-        price = price_cache[symbol]
-        if price is None:
-            continue
+                data = []
+            for cd in data:
+                try:
+                    t = int(cd["t"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if sym_checked is not None and t <= sym_checked:
+                    continue
+                rows.append(cd)
+                if newest is None or t > newest:
+                    newest = t
+            candle_cache[symbol] = (rows, sym_checked)
+            if newest is not None and (sym_checked is None or newest > sym_checked):
+                checked[symbol] = newest
+                changed = True
+        rows, sym_checked = candle_cache[symbol]
 
-        side = "above" if price >= level else "below"
         prev = seen.get(rid)
         if isinstance(prev, str):  # 兼容旧状态格式
             prev = {"side": prev, "level": None}
@@ -250,12 +287,21 @@ def main():
             isinstance(prev_level, (int, float))
             and abs(float(prev_level) - level) < 1e-9
         )
-        fired = False
-        if prev_side is not None and prev_side != side and same_level:
-            if is_up and prev_side == "below" and side == "above":
-                fired = True
-            elif (not is_up) and prev_side == "above" and side == "below":
-                fired = True
+
+        fired_ts = None
+        fired_price = None
+        if sym_checked is not None and prev_side is not None and same_level:
+            fired_ts, fired_price, side = scan_cross(rows, level, prev_side, is_up)
+        else:
+            # 首次运行或周期滚动：只按最新收盘布防，不回扫
+            side = prev_side
+            for cd in reversed(rows):
+                try:
+                    side = "above" if float(cd["c"]) >= level else "below"
+                    break
+                except (KeyError, TypeError, ValueError):
+                    continue
+            same_level = False
 
         if prev_side != side or not same_level:
             seen[rid] = {"side": side, "level": level}
@@ -263,20 +309,23 @@ def main():
 
         direction = "上破" if is_up else "下破"
         print(
-            f"{label} {symbol} last={price} level={level} side={side} "
-            f"prev={prev_side} fired={fired}"
+            f"{label} {symbol} level={level} side={side} prev={prev_side} "
+            f"fired={'yes' if fired_ts else 'no'}"
         )
 
-        if fired:
+        if fired_ts is not None:
             arrow = "\U0001F53C" if is_up else "\U0001F53D"
-            ts = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
+            ts = datetime.fromtimestamp(fired_ts, BJ).strftime("%Y-%m-%d %H:%M")
             desc = rule_desc(rule)
             subject = f"{label} {direction}"
             if desc:
                 subject += f" {desc}"
             else:
                 subject += f" {fmt_price(level)}"
-            messages.append(f"{arrow} {subject}\n现价 {fmt_price(price)}（{ts} 北京时间）")
+            messages.append(
+                f"{arrow} {subject}\n穿越 {fmt_price(level)} 于 {ts} 北京时间"
+                f"（收 {fmt_price(fired_price)}）"
+            )
 
     if changed:
         save_json(STATE_PATH, state)

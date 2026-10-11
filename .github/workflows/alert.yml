@@ -2,12 +2,12 @@ name: market-alert
 
 on:
   schedule:
-    # 每 5 分钟检查一次（GitHub 的 cron 最小间隔；高峰可能延迟几分钟）
+    # 兜底：每 5 分钟检查一次（cron-job.org 另会每分钟触发一次）
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: market-alert
@@ -23,16 +23,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 状态存进 Actions 缓存，避免每分钟往仓库提交一次 state.json
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: alerts/state.json
+          key: market-alert-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            market-alert-state-
+
       - name: Run market check
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python alerts/check.py
-
-      - name: Commit alert state
-        run: |
-          git config user.name "market-alert-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add alerts/state.json
-          git diff --quiet --cached || git commit -m "chore: update alert state"
-          git push

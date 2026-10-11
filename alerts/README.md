@@ -4,10 +4,19 @@
 
 ## 它怎么工作
 
-- GitHub Actions 每 5 分钟运行一次 `alerts/check.py`
+- GitHub Actions 运行 `alerts/check.py`：内置每 5 分钟兜底，另由 cron-job.org 每分钟调用 `workflow_dispatch` 触发一次
 - 脚本从 `alerts/config.json` 读取规则，拉取对应合约数据并判定
-- 命中时通过 Telegram 机器人推送；每条规则每次穿越只提醒一次，价格回到另一侧后重新武装（不会刷屏）
-- 各规则的当前"上/下"状态记录在 `alerts/state.json`，由工作流自动提交
+- **区间扫描**：每次只看「上次运行至今」新增的 1 分钟 K 线，用它们的收盘价判断有没有穿越，所以两次运行之间的短暂穿越也不会漏，且不会重复提醒
+- 每条规则每次穿越只提醒一次，价格回到另一侧后重新武装（不会刷屏）
+- 各规则的当前「上/下」状态、以及每个合约「已处理到的最新 1 分钟 K 线时间」记录在 `alerts/state.json`，由工作流存进 Actions 缓存（不打进 git，避免每分钟一次提交）
+
+## 触发频率
+
+- 兜底：仓库内 `schedule` 每 5 分钟一次
+- 提速：cron-job.org 对下面这个地址每 1 分钟发一次 `POST`，成功返回 `204`
+  - `https://api.github.com/repos/wond03/market-alert/actions/workflows/alert.yml/dispatches`
+  - 请求头 `Authorization: Bearer <fine-grained PAT>`（该 PAT 需对本仓库有 `Actions: Read and write`）
+  - 请求体 `{"ref":"master"}`
 
 ## 两种规则类型
 
@@ -37,7 +46,7 @@
 | `label` | 推送显示名 |
 | `type` | 固定写 `breakout` |
 | `indicator` | 固定写 `prev_ohlc` |
-| `tf` | 周期：`1h` / `4h` / `1d` |
+| `tf` | 周期：`15m` / `1h` / `4h` / `1d` |
 | `offset` | 回退周期数：`2`=上一个完整周期，`3`=再往前一个。必须 `>= 2` |
 | `field` | 用哪个价位做水平：`high` / `low` / `open` / `close` |
 | `dir` | `up`（向上突破）/ `down`（向下跌破）|
