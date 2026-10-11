@@ -1,9 +1,4 @@
 {
-  "_readme": "每条规则: symbol=Gate.io 合约名, label=推送显示名, type=cross_up(上破)/cross_down(下破), price=触发价位。改完保存提交即可，下次定时运行生效。",
-  "rules": [
-    { "symbol": "BTC_USDT", "label": "BTC", "type": "cross_up", "price": 85000 },
-    { "symbol": "BTC_USDT", "label": "BTC", "type": "cross_down", "price": 82000 },
-    { "symbol": "XAU_USDT", "label": "XAU", "type": "cross_up", "price": 4250 },
-    { "symbol": "XAU_USDT", "label": "XAU", "type": "cross_down", "price": 4150 }
-  ]
+  "_readme": "rules 为空时机器人静默待命。每条规则: symbol=Gate.io 合约名, label=推送显示名, type=cross_up(上破)/cross_down(下破), price=触发价位。",
+  "rules": []
 }
