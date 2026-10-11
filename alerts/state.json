@@ -1,3 +1,1 @@
-{
-  "rules": {}
-}
+{ "rules": { "BTC_USDT:cross_up:83000": "below" } }

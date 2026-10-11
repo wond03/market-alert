@@ -1,13 +1,1 @@
-{
-  "_readme": [
-    "每条规则: symbol=Gate.io 合约名(见 used_symbols), label=推送里显示的名字,",
-    "type=cross_up(上破) 或 cross_down(下破), price=触发价位。",
-    "改完直接保存提交即可，机器人会在下一次定时运行时读取。"
-  ],
-  "rules": [
-    { "symbol": "BTC_USDT", "label": "BTC", "type": "cross_up", "price": 85000 },
-    { "symbol": "BTC_USDT", "label": "BTC", "type": "cross_down", "price": 82000 },
-    { "symbol": "XAU_USDT", "label": "XAU", "type": "cross_up", "price": 4250 },
-    { "symbol": "XAU_USDT", "label": "XAU", "type": "cross_down", "price": 4150 }
-  ]
-}
+{ "rules": [ { "symbol": "BTC_USDT", "label": "BTC", "type": "cross_up", "price": 83000 } ] }
