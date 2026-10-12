@@ -1,16 +1,19 @@
 // SMC（Smart Money Concepts）纸面记录器 —— 只记录、不推送、不交易。
 //
-// 冻结定义（2026-10-13 与用户确认，fractal N=2）：
-//  - 摆动点：某根 K 的高(低)严格高于(低于)左右各 2 根 → 摆动高(低)点；右侧 2 根收盘后才确认，无未来函数。
-//  - 结构：最近两个已确认摆动高、两个摆动低同时抬升 = bull；同时下移 = bear；否则 range。
-//  - 区间/溢折价：最近确认摆动高-低为 dealing range；(price-low)/(high-low) ≥ 0.5 = premium，< 0.5 = discount。
-//  - FVG：三根 K 失衡缺口；记录当前价上方/下方最近的「未填补」缺口及方向。
-//  - 扫荡：某根 15m K 新鲜刺破参考位（前时段高/低 或 摆动高/低）后收盘回到位内（SFP / liquidity sweep）。
-//  - 每个扫荡同时记录两个方向：reversal（SFP 反转）与 continuation（延续），事后对比。
-//  - 只在三大交易时段（亚洲盘/伦敦盘/纽约盘）内记录（日内）。
-//  - 出场与成本口径沿用旧回测（SL 0.5% / TP 0.6% / H 8h），并记录 MFE/MAE 供事后重算其它出场。
+// 判定改用 LuxAlgo 开源定义（见 ./luxSmc，与看盘指标、回测同一套代码）：
+//  - 摆动点：leg(size) 确认的摆动高/低；摆动结构 size=50。
+//  - 结构 BOS/CHoCH：收盘价上/下穿最近未被穿过的摆动高/低点；上穿时原趋势跌→CHoCH 否则 BOS。
+//  - 订单块(OB)：突破时在「摆动点 bar → 当前 bar」区间取的整根 K（含高波动 K 过滤），右侧延伸至被缓解。
+//  - 等高等低 EQH/EQL、FVG、溢价/折价、强弱高/低：均按 LuxAlgo 定义。
 //
-// 判定逻辑在 ./smcCore（与回测共用同一份代码）。仅在设置 SMC_TRACKING=1 的部署上运行（prod）。
+// 每个结构突破记录两个方向假设（事后对比）：
+//  - bias="break"  ：突破顺势 —— 在突破 K 收盘价进场。
+//  - bias="retest" ：订单块回撤 —— 突破后价格首次回踩该突破生成的订单块时进场。
+//  - 两者入场方向均 = 突破方向（bull→long / bear→short）。
+//
+// 只在三大交易时段（亚洲盘/伦敦盘/纽约盘）内记录（日内）。
+// 出场与成本口径沿用旧回测（SL 0.5% / TP 0.6% / 8h 兜底），并记录 MFE/MAE 供事后重算。
+// 仅在设置 SMC_TRACKING=1 的部署上运行（prod）。
 
 import {
   internalAction,
@@ -23,18 +26,15 @@ import { v } from "convex/values";
 import * as gate from "./gate";
 import * as exchanges from "./exchanges";
 import type { Exchange } from "./exchanges";
+import { SL, TP, HOLD_H, TF, alignOf, manage } from "./smcCore";
 import {
-  FRACTAL,
-  TF,
-  SL,
-  TP,
-  HOLD_H,
-  findSwings,
-  structureOf,
-  nearestFvg,
-  alignOf,
-  manage,
-} from "./smcCore";
+  SWING_LEN,
+  runStructure,
+  computeFvgs,
+  computeTrailing,
+  type OrderBlock,
+  type StructureResult,
+} from "./luxSmc";
 
 function env(name: string): string {
   const proc = (globalThis as { process?: { env?: Record<string, string> } })
@@ -53,6 +53,7 @@ type SignalInsert = {
   session: string;
   level: number;
   levelKind: string;
+  tag?: string;
   sweepSide: string;
   bias: string;
   tradeDir: string;
@@ -77,6 +78,35 @@ type SignalInsert = {
   openedAt: number;
 };
 
+type Trend = "bull" | "bear" | "range";
+
+// 结构方向「截至某根 bar」：取最后一根 idx<=j 的突破方向，无则 range。
+function trendAsOf(res: StructureResult, j: number): Trend {
+  let t: Trend = "range";
+  for (const br of res.breaks) {
+    if (br.idx <= j) t = br.dir;
+    else break;
+  }
+  return t;
+}
+
+// 订单块回踩进场：突破后价格首次触及该 OB（看涨 low<=ob.high / 看跌 high>=ob.low）。
+function entryForOB(
+  closed: gate.Candle[],
+  ob: OrderBlock,
+  fromIdx: number,
+): { idx: number; price: number } | null {
+  for (let k = fromIdx + 1; k < closed.length; k++) {
+    if (ob.bias === "bull" && closed[k].l <= ob.high) {
+      return { idx: k, price: Math.min(ob.high, closed[k].o) };
+    }
+    if (ob.bias === "bear" && closed[k].h >= ob.low) {
+      return { idx: k, price: Math.max(ob.low, closed[k].o) };
+    }
+  }
+  return null;
+}
+
 export const scan = internalAction({
   args: {},
   handler: async (ctx) => {
@@ -95,10 +125,11 @@ export const scan = internalAction({
 
     let opened = 0;
     for (const symbol of SYMBOLS) {
-      let c15: gate.Candle[];
+      let closed: gate.Candle[];
       let c1h: gate.Candle[];
       try {
-        c15 = await get15(symbol);
+        const c15 = await get15(symbol);
+        closed = c15.filter((c) => c.t + TF <= now);
         c1h = (await exchanges.getCandles(EXCHANGE, exchanges.contractOf(EXCHANGE, symbol), "1h", 200)).filter(
           (c) => c.t + 3600 <= now,
         );
@@ -106,116 +137,121 @@ export const scan = internalAction({
         console.error(`smc fetch ${symbol} failed: ${e}`);
         continue;
       }
-      const closed = c15.filter((c) => c.t + TF <= now);
-      if (closed.length < 20) continue;
+      if (closed.length < SWING_LEN + 5) continue;
 
-      // 前时段高/低（复用 gate 的时段轮转逻辑）
-      const cache = new Map<string, gate.Candle[]>();
-      const mkRule = (field: "high" | "low", dir: "up" | "down"): gate.RuleDoc => ({
-        _id: `${EXCHANGE}:${symbol}:${field}`,
-        exchange: EXCHANGE,
-        symbol,
-        label: `${symbol} ${field}`,
-        type: "breakout",
-        indicator: "prev_session",
-        field,
-        dir,
-        enabled: true,
-      });
-      const levels: { kind: string; price: number }[] = [];
-      try {
-        levels.push({ kind: "session_high", price: (await gate.resolveLevel(mkRule("high", "up"), cache)).level });
-        levels.push({ kind: "session_low", price: (await gate.resolveLevel(mkRule("low", "down"), cache)).level });
-      } catch (e) {
-        console.error(`smc session ${symbol} failed: ${e}`);
+      const st = runStructure(closed, SWING_LEN);
+      const stH = runStructure(c1h, SWING_LEN);
+
+      // 按 bar 索引归集事件：突破 / 订单块回踩
+      const evByBar = new Map<number, { kind: "break" | "retest"; bi: number }[]>();
+      const pushEv = (idx: number, ev: { kind: "break" | "retest"; bi: number }) => {
+        const a = evByBar.get(idx);
+        if (a) a.push(ev);
+        else evByBar.set(idx, [ev]);
+      };
+      for (let bi = 0; bi < st.breaks.length; bi++) {
+        pushEv(st.breaks[bi].idx, { kind: "break", bi });
+        const ob = st.orderBlocks[bi];
+        if (ob) {
+          const e = entryForOB(closed, ob, st.breaks[bi].idx);
+          if (e) pushEv(e.idx, { kind: "retest", bi });
+        }
       }
 
-      const swings15 = findSwings(c15, FRACTAL);
-      const swings1h = findSwings(c1h, FRACTAL);
-      const trend1h = structureOf(swings1h.highs, swings1h.lows);
-
       const key = `${EXCHANGE}:${symbol}`;
-      const st = await ctx.runQuery(internal.smc.getState, { key });
-      const prevChecked = st?.checked;
+      const state = await ctx.runQuery(internal.smc.getState, { key });
+      const prevChecked = state?.checked;
       const newBars = prevChecked === undefined ? [] : closed.filter((c) => c.t > prevChecked);
 
       const rows: SignalInsert[] = [];
       for (const bar of newBars) {
-        const j = c15.findIndex((c) => c.t === bar.t);
-        if (j < FRACTAL + 2) continue;
+        const j = closed.findIndex((c) => c.t === bar.t);
+        if (j < SWING_LEN + 2) continue;
         // 日内：仅记录三大交易时段（亚洲盘/伦敦盘/纽约盘）内收盘的信号。
         const session = gate.currentSessionName(bar.t + TF);
         if (!session) continue;
-        // 该 bar 时刻「已确认」的摆动点（右侧 N 根已出现）
-        const hi = swings15.highs.filter((s) => s.idx <= j - FRACTAL);
-        const lo = swings15.lows.filter((s) => s.idx <= j - FRACTAL);
-        const trend15 = structureOf(hi, lo);
-        const lastHi = hi.length ? hi[hi.length - 1] : null;
-        const lastLo = lo.length ? lo[lo.length - 1] : null;
+        const evs = evByBar.get(j);
+        if (!evs || !evs.length) continue;
 
+        const trend15 = trendAsOf(st, j);
+        let jh = -1;
+        for (let i = 0; i < c1h.length; i++) {
+          if (c1h[i].t <= bar.t) jh = i;
+          else break;
+        }
+        const trend1h = trendAsOf(stH, jh);
+
+        // 溢价/折价（trailing 极值，截至当前 bar）
+        const slice = closed.slice(0, j + 1);
+        const tr = computeTrailing(slice, SWING_LEN);
         let rangeHigh: number | undefined;
         let rangeLow: number | undefined;
         let posPct: number | undefined;
         let zone = "mid";
-        if (lastHi && lastLo && lastHi.price > lastLo.price) {
-          rangeHigh = lastHi.price;
-          rangeLow = lastLo.price;
+        if (tr.top > tr.bottom) {
+          rangeHigh = tr.top;
+          rangeLow = tr.bottom;
           posPct = (bar.c - rangeLow) / (rangeHigh - rangeLow);
           zone = posPct >= 0.5 ? "premium" : "discount";
         }
-        const fvg = nearestFvg(c15, j, bar.c);
-        const prev = c15[j - 1];
 
-        const barLevels: { kind: string; price: number }[] = [];
-        if (lastHi) barLevels.push({ kind: "swing_high", price: lastHi.price });
-        if (lastLo) barLevels.push({ kind: "swing_low", price: lastLo.price });
-        for (const L of levels) barLevels.push(L);
-
-        for (const L of barLevels) {
-          // 新鲜刺破：仅当上一根未触碰该位时才计一次，避免连续多根重复扫同一位。
-          const up = bar.h > L.price && bar.c < L.price && prev.h <= L.price; // 上破后收回 → 上侧被扫
-          const dn = bar.l < L.price && bar.c > L.price && prev.l >= L.price; // 下破后收回 → 下侧被扫
-          if (!up && !dn) continue;
-          const pen = up ? (bar.h - L.price) / L.price : (L.price - bar.l) / L.price;
-          const revDir = up ? "short" : "long"; // SFP：扫上做空、扫下做多
-          const contDir = up ? "long" : "short"; // 延续：顺势继续
-          const biases: [string, string][] = [
-            ["reversal", revDir],
-            ["continuation", contDir],
-          ];
-          for (const [bias, td] of biases) {
-            rows.push({
-              exchange: EXCHANGE,
-              symbol,
-              sigTs: bar.t,
-              session,
-              level: L.price,
-              levelKind: L.kind,
-              sweepSide: up ? "up" : "down",
-              bias,
-              tradeDir: td,
-              entryPrice: bar.c,
-              pen,
-              rangeHigh,
-              rangeLow,
-              posPct,
-              zone,
-              trend1h,
-              trend15,
-              align1h: alignOf(td, trend1h),
-              align15: alignOf(td, trend15),
-              fvgAbove: fvg.above ? fvg.above.dist : undefined,
-              fvgBelow: fvg.below ? fvg.below.dist : undefined,
-              fvgAboveDir: fvg.above ? fvg.above.dir : undefined,
-              fvgBelowDir: fvg.below ? fvg.below.dir : undefined,
-              sl: SL,
-              tp: TP,
-              holdH: HOLD_H,
-              status: "open",
-              openedAt: now,
-            });
-            opened++;
+        // 最近未填补 FVG（LuxAlgo 定义）
+        let fvgAbove: { dist: number; dir: string } | null = null;
+        let fvgBelow: { dist: number; dir: string } | null = null;
+        for (const f of computeFvgs(slice)) {
+          if (f.mitigatedIdx !== null) continue;
+          const mid = (f.top + f.bottom) / 2;
+          const dist = Math.abs(mid - bar.c) / bar.c;
+          if (mid > bar.c) {
+            if (!fvgAbove || dist < fvgAbove.dist) fvgAbove = { dist, dir: f.dir };
+          } else {
+            if (!fvgBelow || dist < fvgBelow.dist) fvgBelow = { dist, dir: f.dir };
           }
+        }
+
+        for (const ev of evs) {
+          const br = st.breaks[ev.bi];
+          const dir = br.dir === "bull" ? "long" : "short";
+          let entryPrice = bar.c;
+          if (ev.kind === "retest") {
+            const ob = st.orderBlocks[ev.bi];
+            if (!ob) continue;
+            const e = entryForOB(closed, ob, br.idx);
+            if (!e || e.idx !== j) continue;
+            entryPrice = e.price;
+          }
+          rows.push({
+            exchange: EXCHANGE,
+            symbol,
+            sigTs: bar.t,
+            session,
+            level: br.level,
+            levelKind: "structural",
+            tag: br.tag,
+            sweepSide: br.dir,
+            bias: ev.kind,
+            tradeDir: dir,
+            entryPrice,
+            pen: Math.abs((entryPrice - br.level) / br.level),
+            rangeHigh,
+            rangeLow,
+            posPct,
+            zone,
+            trend1h,
+            trend15,
+            align1h: alignOf(dir, trend1h),
+            align15: alignOf(dir, trend15),
+            fvgAbove: fvgAbove ? fvgAbove.dist : undefined,
+            fvgBelow: fvgBelow ? fvgBelow.dist : undefined,
+            fvgAboveDir: fvgAbove ? fvgAbove.dir : undefined,
+            fvgBelowDir: fvgBelow ? fvgBelow.dir : undefined,
+            sl: SL,
+            tp: TP,
+            holdH: HOLD_H,
+            status: "open",
+            openedAt: now,
+          });
+          opened++;
         }
       }
 
@@ -273,6 +309,7 @@ const signalValidator = v.object({
   session: v.string(),
   level: v.number(),
   levelKind: v.string(),
+  tag: v.optional(v.string()),
   sweepSide: v.string(),
   bias: v.string(),
   tradeDir: v.string(),
@@ -362,8 +399,12 @@ export const smcSummary = query({
       closed: closed.length,
       overall: statsOf(closed.map((s) => s.net as number)),
       byBias: {
-        reversal: group((s) => s.bias === "reversal"),
-        continuation: group((s) => s.bias === "continuation"),
+        break: group((s) => s.bias === "break"),
+        retest: group((s) => s.bias === "retest"),
+      },
+      byTag: {
+        BOS: group((s) => s.tag === "BOS"),
+        CHoCH: group((s) => s.tag === "CHoCH"),
       },
       byAlign1h: { aligned: group((s) => s.align1h), opposing: group((s) => !s.align1h) },
       byZone: { premium: group((s) => s.zone === "premium"), discount: group((s) => s.zone === "discount") },

@@ -58,16 +58,17 @@ export default defineSchema({
     checked: v.number(),
   }).index("by_key", ["key"]),
 
-  // SMC 记录器：流动性扫荡候选信号与假设成交（只记录，不推送/不交易）
+  // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
   smcSignals: defineTable({
     exchange: v.string(),
     symbol: v.string(),
     sigTs: v.number(),
     session: v.string(), // 亚洲盘 | 伦敦盘 | 纽约盘（仅记录三大时段内的信号）
-    level: v.number(), // 被扫荡的参考位
-    levelKind: v.string(), // session_high | session_low | swing_high | swing_low
-    sweepSide: v.string(), // up | down（哪一侧被扫）
-    bias: v.string(), // reversal | continuation
+    level: v.number(), // 被突破的摆动点价位
+    levelKind: v.string(), // structural
+    tag: v.optional(v.string()), // BOS | CHoCH
+    sweepSide: v.string(), // bull | bear（突破方向）
+    bias: v.string(), // break | retest
     tradeDir: v.string(), // long | short
     entryPrice: v.number(),
     pen: v.number(), // 刺破幅度
