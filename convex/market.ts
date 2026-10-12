@@ -61,6 +61,7 @@ export const insertAlerts = internalMutation({
       v.object({
         ts: v.number(),
         firedTs: v.number(),
+        exchange: v.optional(v.string()),
         symbol: v.string(),
         label: v.string(),
         direction: v.string(),
@@ -82,6 +83,9 @@ export const replaceRules = internalMutation({
   args: {
     rules: v.array(
       v.object({
+        exchange: v.optional(
+          v.union(v.literal("gate"), v.literal("weex"), v.literal("okx")),
+        ),
         symbol: v.string(),
         label: v.string(),
         type: v.union(

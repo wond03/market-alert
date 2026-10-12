@@ -1,6 +1,9 @@
-// Gate.io 期货数据抓取与穿越判定，移植自 alerts/check.py。
+// 告警判定逻辑（穿越/突破/聚合/文案），移植自 alerts/check.py。
+// 交易所 K 线抓取见 exchanges.ts。
 
-export const BASE = "https://api.gateio.ws/api/v4";
+import { getCandles, contractOf, type Candle, type Exchange } from "./exchanges";
+
+export type { Candle };
 export const BJ_OFFSET = 8 * 3600; // 北京时间相对 UTC 的偏移（秒）
 export const BASE_INTERVAL = "1h";
 export const SCAN_INTERVAL = "1m";
@@ -27,12 +30,17 @@ export const FIELD_NAME: Record<string, string> = {
   low: "低",
   close: "收",
 };
+export const EXCHANGE_NAME: Record<string, string> = {
+  gate: "Gate",
+  weex: "WEEX",
+  okx: "OKX",
+};
 
-export type Candle = { t: number; o: number; h: number; l: number; c: number; v: number };
 export type Side = "above" | "below";
 
 export type RuleDoc = {
   _id: string;
+  exchange: Exchange;
   symbol: string;
   label: string;
   type: "cross_up" | "cross_down" | "breakout";
@@ -52,39 +60,6 @@ export type Fired = {
   level: number;
   isUp: boolean;
 };
-
-export async function getCandles(
-  contract: string,
-  interval: string = BASE_INTERVAL,
-  limit: number = CANDLE_LIMIT,
-): Promise<Candle[]> {
-  const url =
-    `${BASE}/futures/usdt/candlesticks` +
-    `?contract=${contract}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "market-alert/1.0", Accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${contract} ${interval}`);
-  const raw = await res.json();
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((cd: Record<string, unknown>) => ({
-      t: Number(cd.t),
-      o: Number(cd.o),
-      h: Number(cd.h),
-      l: Number(cd.l),
-      c: Number(cd.c),
-      v: Number(cd.v),
-    }))
-    .filter(
-      (cd: Candle) =>
-        isFinite(cd.t) &&
-        isFinite(cd.o) &&
-        isFinite(cd.h) &&
-        isFinite(cd.l) &&
-        isFinite(cd.c),
-    );
-}
 
 type Period = { key: number; open: number; high: number; low: number; close: number };
 
@@ -108,7 +83,8 @@ export function aggregatePeriods(candles: Candle[], secs: number): Period[] {
 }
 
 export async function prevOhlcLevel(
-  contract: string,
+  exchange: Exchange,
+  symbol: string,
   tf: string,
   offset: number,
   field: string,
@@ -121,10 +97,10 @@ export async function prevOhlcLevel(
     throw new Error("breakout 需要 offset >= 2（当前正在形成的周期不适用）");
   }
   const base = NATIVE_TFS[tf] ? tf : BASE_INTERVAL;
-  const cacheKey = `${contract}:${base}`;
+  const cacheKey = `${exchange}:${symbol}:${base}`;
   let candles = cache.get(cacheKey);
   if (!candles) {
-    candles = await getCandles(contract, base);
+    candles = await getCandles(exchange, contractOf(exchange, symbol), base);
     cache.set(cacheKey, candles);
   }
   const periods = aggregatePeriods(candles, secs);
@@ -146,6 +122,7 @@ export async function resolveLevel(
       throw new Error(`unsupported indicator: ${indicator}`);
     }
     const level = await prevOhlcLevel(
+      rule.exchange,
       rule.symbol,
       rule.tf ?? "1d",
       rule.offset ?? 2,
@@ -184,12 +161,13 @@ export function scanCross(
 }
 
 export function ruleId(rule: RuleDoc): string {
+  const ex = rule.exchange ?? "gate";
   if (rule.type === "breakout") {
-    return `${rule.symbol}:breakout:${rule.tf}:${rule.offset}:${rule.field}:${
+    return `${ex}:${rule.symbol}:breakout:${rule.tf}:${rule.offset}:${rule.field}:${
       rule.dir ?? "up"
     }`;
   }
-  return `${rule.symbol}:${rule.type}:${rule.price}`;
+  return `${ex}:${rule.symbol}:${rule.type}:${rule.price}`;
 }
 
 export function periodName(tf: string, offset: number): string {
@@ -239,7 +217,8 @@ export function buildMessage(
   const arrow = isUp ? "\u{1F53C}" : "\u{1F53D}";
   const direction = isUp ? "上破" : "下破";
   const desc = ruleDesc(rule);
-  let subject = `${rule.label} ${direction}`;
+  const exName = EXCHANGE_NAME[rule.exchange ?? "gate"] ?? rule.exchange;
+  let subject = `${exName} ${rule.label} ${direction}`;
   subject += desc ? ` ${desc}` : ` ${fmtPrice(level)}`;
   return (
     `${arrow} ${subject}\n` +

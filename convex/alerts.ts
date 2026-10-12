@@ -1,6 +1,8 @@
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import * as gate from "./gate";
+import * as exchanges from "./exchanges";
+import type { Exchange } from "./exchanges";
 
 function env(name: string): string {
   const proc = (globalThis as { process?: { env?: Record<string, string> } })
@@ -45,7 +47,11 @@ export const sendTest = internalAction({
 export const pollAndCheck = internalAction({
   args: {},
   handler: async (ctx) => {
-    const rules = await ctx.runQuery(internal.market.enabledRules, {});
+    const rawRules = await ctx.runQuery(internal.market.enabledRules, {});
+    const rules: gate.RuleDoc[] = rawRules.map((r) => ({
+      ...r,
+      exchange: (r.exchange ?? "gate") as Exchange,
+    }));
     if (rules.length === 0) {
       console.log("no rules configured; nothing to do");
       return;
@@ -56,36 +62,51 @@ export const pollAndCheck = internalAction({
     const stateByKey = new Map(ruleStates.map((s) => [s.ruleKey, s]));
     const scanBySymbol = new Map(scanStates.map((s) => [s.symbol, s.checked]));
 
-    const symbols = Array.from(new Set(rules.map((r) => r.symbol)));
+    // 按 (交易所, 标的) 分组，各自抓取对应交易所的 1 分钟 K 线
+    const groups = new Map<
+      string,
+      { exchange: Exchange; symbol: string; rules: gate.RuleDoc[] }
+    >();
+    for (const r of rules) {
+      const key = `${r.exchange}:${r.symbol}`;
+      const g = groups.get(key);
+      if (g) g.rules.push(r);
+      else groups.set(key, { exchange: r.exchange, symbol: r.symbol, rules: [r] });
+    }
+
     const baseCache = new Map<string, gate.Candle[]>();
     const now = Math.floor(Date.now() / 1000);
 
-    for (const symbol of symbols) {
-      const symRules = rules.filter((r) => r.symbol === symbol);
-      const prevChecked = scanBySymbol.get(symbol);
+    for (const g of groups.values()) {
+      const stateKey = `${g.exchange}:${g.symbol}`;
+      const prevChecked = scanBySymbol.get(stateKey);
 
       let rows: gate.Candle[] = [];
       let newest: number | undefined;
       try {
-        const data = await gate.getCandles(symbol, gate.SCAN_INTERVAL);
+        const data = await exchanges.getCandles(
+          g.exchange,
+          exchanges.contractOf(g.exchange, g.symbol),
+          gate.SCAN_INTERVAL,
+        );
         for (const cd of data) {
           if (prevChecked !== undefined && cd.t <= prevChecked) continue;
           rows.push(cd);
           if (newest === undefined || cd.t > newest) newest = cd.t;
         }
       } catch (e) {
-        console.error(`fetch ${symbol} failed: ${e}`);
+        console.error(`fetch ${stateKey} failed: ${e}`);
         continue;
       }
 
       if (newest !== undefined && (prevChecked === undefined || newest > prevChecked)) {
         await ctx.runMutation(internal.market.upsertScanState, {
-          symbol,
+          symbol: stateKey,
           checked: newest,
         });
       }
 
-      for (const rule of symRules) {
+      for (const rule of g.rules) {
         const rid = gate.ruleId(rule);
         let level: number;
         let isUp: boolean;
@@ -133,7 +154,7 @@ export const pollAndCheck = internalAction({
         }
 
         console.log(
-          `${rule.label} ${symbol} level=${level} side=${side} ` +
+          `${rule.label} ${g.exchange} ${g.symbol} level=${level} side=${side} ` +
             `prev=${prevSide} fired=${firedTs !== null ? "yes" : "no"}`,
         );
 
@@ -145,7 +166,8 @@ export const pollAndCheck = internalAction({
               {
                 ts: now,
                 firedTs,
-                symbol,
+                exchange: g.exchange,
+                symbol: g.symbol,
                 label: rule.label,
                 direction,
                 level,
