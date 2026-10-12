@@ -26,16 +26,25 @@ export const upsertRuleState = internalMutation({
     ruleKey: v.string(),
     side: v.union(v.literal("above"), v.literal("below")),
     level: v.number(),
+    wickDone: v.optional(v.boolean()),
   },
-  handler: async (ctx, { ruleKey, side, level }) => {
+  handler: async (ctx, { ruleKey, side, level, wickDone }) => {
     const existing = await ctx.db
       .query("ruleState")
       .withIndex("by_ruleKey", (q) => q.eq("ruleKey", ruleKey))
       .unique();
     if (existing) {
-      await ctx.db.patch(existing._id, { side, level });
+      await ctx.db.patch(
+        existing._id,
+        wickDone === undefined ? { side, level } : { side, level, wickDone },
+      );
     } else {
-      await ctx.db.insert("ruleState", { ruleKey, side, level });
+      await ctx.db.insert("ruleState", {
+        ruleKey,
+        side,
+        level,
+        ...(wickDone === undefined ? {} : { wickDone }),
+      });
     }
   },
 });
@@ -65,6 +74,7 @@ export const insertAlerts = internalMutation({
         symbol: v.string(),
         label: v.string(),
         direction: v.string(),
+        signal: v.optional(v.string()),
         level: v.number(),
         price: v.number(),
         text: v.string(),

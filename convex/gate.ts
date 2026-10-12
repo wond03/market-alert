@@ -8,6 +8,9 @@ export const BJ_OFFSET = 8 * 3600; // 北京时间相对 UTC 的偏移（秒）
 export const BASE_INTERVAL = "1h";
 export const SCAN_INTERVAL = "1m";
 export const CANDLE_LIMIT = 1000;
+// 突破类规则统一用 15 分钟 K 线判定（区分影线/实体），收盘后才触发。
+export const BREAK_INTERVAL = "15m";
+export const BREAK_SECONDS = 900;
 
 // 15m/1h/4h 的北京时间边界与 UTC 边界重合，可直接取原生周期；
 // 日线需按北京时间聚合，故统一用 1h 聚合（见 prevOhlcLevel）。
@@ -279,6 +282,53 @@ export function scanCross(
   return { firedTs, firedPrice, side };
 }
 
+// 突破信号类型：body=实体突破（收盘站上/跌破），wick=影线突破（最高/最低触及但收盘未破）。
+export type SignalKind = "body" | "wick";
+export type BreakEvent = { kind: SignalKind; ts: number; price: number };
+
+// 逐根遍历 15 分钟 K 线，按「先影线后实体」判断突破：
+//   - 收盘在关键位另一侧 → 实体突破（仅在由另一侧转过来时触发）
+//   - 收盘未破但最高/最低触及关键位 → 影线突破（每段触碰只报一次）
+// prevSide 为空表示首次布防/周期滚动：以第一根收盘为基准布防，不回扫。
+export function scanBreakout(
+  candles: Candle[],
+  level: number,
+  isUp: boolean,
+  prevSide: Side | undefined,
+  prevWickDone: boolean | undefined,
+): { events: BreakEvent[]; side: Side; wickDone: boolean } {
+  const events: BreakEvent[] = [];
+  const first = prevSide === undefined;
+  const initSide: Side = prevSide ??
+    (candles.length > 0 && candles[0].c >= level ? "above" : "below");
+  let side: Side = initSide;
+  let wickDone = prevWickDone ?? false;
+  for (let i = 0; i < candles.length; i++) {
+    const cd = candles[i];
+    if (first && i === 0) {
+      side = cd.c >= level ? "above" : "below";
+      wickDone = false;
+      continue;
+    }
+    const closing = isUp ? cd.c >= level : cd.c <= level;
+    const touched = isUp ? cd.h >= level : cd.l <= level;
+    if (closing) {
+      const crossed = isUp ? side === "below" : side === "above";
+      if (crossed) events.push({ kind: "body", ts: cd.t, price: cd.c });
+      side = isUp ? "above" : "below";
+      wickDone = false;
+    } else {
+      if (touched && !wickDone) {
+        events.push({ kind: "wick", ts: cd.t, price: isUp ? cd.h : cd.l });
+        wickDone = true;
+      }
+      if (!touched) wickDone = false;
+      side = isUp ? "below" : "above";
+    }
+  }
+  return { events, side, wickDone };
+}
+
 export function ruleId(rule: RuleDoc): string {
   const ex = rule.exchange ?? "gate";
   if (rule.type === "breakout") {
@@ -337,6 +387,11 @@ function escHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+export const SIGNAL_NAME: Record<SignalKind, string> = {
+  body: "实体突破",
+  wick: "影线突破",
+};
+
 // 生成 Telegram（HTML parse_mode）告警文案。
 export function buildMessage(
   rule: RuleDoc,
@@ -345,16 +400,20 @@ export function buildMessage(
   firedTs: number,
   firedPrice: number,
   descOverride?: string,
+  signal?: SignalKind,
 ): string {
   const arrow = isUp ? "\u{1F53C}" : "\u{1F53D}";
   const direction = isUp ? "上破" : "下破";
   const desc = descOverride ?? ruleDesc(rule);
   const exName = EXCHANGE_NAME[rule.exchange ?? "gate"] ?? rule.exchange ?? "Gate";
-  const title = `${exName} ${rule.label} ${direction}${desc ? "「" + desc + "」" : ""}`;
+  const tag = signal ? ` · ${SIGNAL_NAME[signal]}` : "";
+  const title =
+    `${exName} ${rule.label} ${direction}${desc ? "「" + desc + "」" : ""}${tag}`;
   const link = `<a href="${DASHBOARD_URL}">\u{1F4C8} 打开看盘页</a>`;
   return (
     `${arrow} <b>${escHtml(title)}</b>\n` +
     `\n` +
+    (signal ? `信号：<b>${SIGNAL_NAME[signal]}</b>\n` : "") +
     `关键位：<b>${fmtPrice(level)}</b>\n` +
     `触发价：${fmtPrice(firedPrice)}\n` +
     `时间：${fmtBeijing(firedTs)} 北京时间\n` +

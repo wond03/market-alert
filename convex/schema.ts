@@ -28,6 +28,8 @@ export default defineSchema({
     ruleKey: v.string(),
     side: v.union(v.literal("above"), v.literal("below")),
     level: v.number(),
+    // 本段触碰是否已推送过「影线突破」（突破类规则使用）
+    wickDone: v.optional(v.boolean()),
   }).index("by_ruleKey", ["ruleKey"]),
 
   // 每个合约已处理到的最新 1 分钟 K 线时间（相当于 state.json 的 checked）
@@ -44,6 +46,7 @@ export default defineSchema({
     symbol: v.string(),
     label: v.string(),
     direction: v.string(),
+    signal: v.optional(v.string()),
     level: v.number(),
     price: v.number(),
     text: v.string(),

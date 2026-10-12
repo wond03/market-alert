@@ -81,107 +81,228 @@ export const pollAndCheck = internalAction({
     const now = Math.floor(Date.now() / 1000);
 
     for (const g of groups.values()) {
-      const stateKey = `${g.exchange}:${g.symbol}`;
-      const prevChecked = scanBySymbol.get(stateKey);
+      const crossRules = g.rules.filter((r) => r.type !== "breakout");
+      const breakRules = g.rules.filter((r) => r.type === "breakout");
 
-      let rows: gate.Candle[] = [];
-      let newest: number | undefined;
-      try {
-        const data = await exchanges.getCandles(
-          g.exchange,
-          exchanges.contractOf(g.exchange, g.symbol),
-          gate.SCAN_INTERVAL,
-        );
-        for (const cd of data) {
-          if (prevChecked !== undefined && cd.t <= prevChecked) continue;
-          rows.push(cd);
-          if (newest === undefined || cd.t > newest) newest = cd.t;
-        }
-      } catch (e) {
-        console.error(`fetch ${stateKey} failed: ${e}`);
-        continue;
-      }
+      // ---- 固定价位穿越规则：1 分钟 K 线，收盘穿越即触发 ----
+      if (crossRules.length > 0) {
+        const stateKey = `${g.exchange}:${g.symbol}:${gate.SCAN_INTERVAL}`;
+        const prevChecked = scanBySymbol.get(stateKey);
 
-      if (newest !== undefined && (prevChecked === undefined || newest > prevChecked)) {
-        await ctx.runMutation(internal.market.upsertScanState, {
-          symbol: stateKey,
-          checked: newest,
-        });
-      }
-
-      for (const rule of g.rules) {
-        const rid = gate.ruleId(rule);
-        let level: number;
-        let isUp: boolean;
-        let desc: string | undefined;
+        let rows: gate.Candle[] = [];
+        let newest: number | undefined;
         try {
-          const resolved = await gate.resolveLevel(rule, baseCache);
-          level = resolved.level;
-          isUp = resolved.isUp;
-          desc = resolved.desc;
+          const data = await exchanges.getCandles(
+            g.exchange,
+            exchanges.contractOf(g.exchange, g.symbol),
+            gate.SCAN_INTERVAL,
+          );
+          for (const cd of data) {
+            if (prevChecked !== undefined && cd.t <= prevChecked) continue;
+            rows.push(cd);
+            if (newest === undefined || cd.t > newest) newest = cd.t;
+          }
         } catch (e) {
-          console.error(`resolve ${rid} failed: ${e}`);
-          continue;
+          console.error(`fetch ${stateKey} failed: ${e}`);
+          rows = [];
         }
 
-        const prev = stateByKey.get(rid);
-        const prevSide = prev?.side;
-        const sameLevel =
-          prev !== undefined && Math.abs(prev.level - level) < 1e-9;
+        if (newest !== undefined && (prevChecked === undefined || newest > prevChecked)) {
+          await ctx.runMutation(internal.market.upsertScanState, {
+            symbol: stateKey,
+            checked: newest,
+          });
+        }
 
-        let side: gate.Side | undefined;
-        let firedTs: number | null = null;
-        let firedPrice: number | null = null;
+        for (const rule of crossRules) {
+          const rid = gate.ruleId(rule);
+          let level: number;
+          let isUp: boolean;
+          let desc: string | undefined;
+          try {
+            const resolved = await gate.resolveLevel(rule, baseCache);
+            level = resolved.level;
+            isUp = resolved.isUp;
+            desc = resolved.desc;
+          } catch (e) {
+            console.error(`resolve ${rid} failed: ${e}`);
+            continue;
+          }
 
-        if (prevChecked !== undefined && prevSide !== undefined && sameLevel) {
-          const res = gate.scanCross(rows, level, prevSide, isUp);
-          firedTs = res.firedTs;
-          firedPrice = res.firedPrice;
-          side = res.side;
-        } else {
-          // 首次运行或周期滚动：只按最新收盘布防，不回扫
-          side = prevSide;
-          for (let i = rows.length - 1; i >= 0; i--) {
-            side = rows[i].c >= level ? "above" : "below";
-            break;
+          const prev = stateByKey.get(rid);
+          const prevSide = prev?.side;
+          const sameLevel =
+            prev !== undefined && Math.abs(prev.level - level) < 1e-9;
+
+          let side: gate.Side | undefined;
+          let firedTs: number | null = null;
+          let firedPrice: number | null = null;
+
+          if (prevChecked !== undefined && prevSide !== undefined && sameLevel) {
+            const res = gate.scanCross(rows, level, prevSide, isUp);
+            firedTs = res.firedTs;
+            firedPrice = res.firedPrice;
+            side = res.side;
+          } else {
+            side = prevSide;
+            for (let i = rows.length - 1; i >= 0; i--) {
+              side = rows[i].c >= level ? "above" : "below";
+              break;
+            }
+          }
+
+          if (side !== undefined && (prevSide !== side || !sameLevel)) {
+            await ctx.runMutation(internal.market.upsertRuleState, {
+              ruleKey: rid,
+              side,
+              level,
+            });
+          }
+
+          console.log(
+            `${rule.label} ${g.exchange} ${g.symbol} level=${level} side=${side} ` +
+              `prev=${prevSide} fired=${firedTs !== null ? "yes" : "no"}`,
+          );
+
+          if (firedTs !== null && firedPrice !== null) {
+            const direction = isUp ? "上破" : "下破";
+            const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice, desc);
+            await ctx.runMutation(internal.market.insertAlerts, {
+              alerts: [
+                {
+                  ts: now,
+                  firedTs,
+                  exchange: g.exchange,
+                  symbol: g.symbol,
+                  label: rule.label,
+                  direction,
+                  level,
+                  price: firedPrice,
+                  text,
+                },
+              ],
+            });
+            await sendTelegram(text);
           }
         }
+      }
 
-        if (
-          side !== undefined &&
-          (prevSide !== side || !sameLevel)
-        ) {
-          await ctx.runMutation(internal.market.upsertRuleState, {
-            ruleKey: rid,
-            side,
-            level,
+      // ---- 突破类规则：15 分钟 K 线，区分影线/实体 ----
+      if (breakRules.length > 0) {
+        const stateKey = `${g.exchange}:${g.symbol}:${gate.BREAK_INTERVAL}`;
+        const prevChecked = scanBySymbol.get(stateKey);
+
+        let rows: gate.Candle[] = [];
+        let newest: number | undefined;
+        try {
+          const data = await exchanges.getCandles(
+            g.exchange,
+            exchanges.contractOf(g.exchange, g.symbol),
+            gate.BREAK_INTERVAL,
+          );
+          for (const cd of data) {
+            if (cd.t + gate.BREAK_SECONDS > now) continue; // 只看已收盘的 15 分钟 K 线
+            if (prevChecked !== undefined && cd.t <= prevChecked) continue;
+            rows.push(cd);
+            if (newest === undefined || cd.t > newest) newest = cd.t;
+          }
+        } catch (e) {
+          console.error(`fetch ${stateKey} failed: ${e}`);
+          rows = [];
+        }
+
+        if (rows.length > 0) {
+          rows.sort((a, b) => a.t - b.t);
+        }
+
+        if (newest !== undefined && (prevChecked === undefined || newest > prevChecked)) {
+          await ctx.runMutation(internal.market.upsertScanState, {
+            symbol: stateKey,
+            checked: newest,
           });
         }
 
-        console.log(
-          `${rule.label} ${g.exchange} ${g.symbol} level=${level} side=${side} ` +
-            `prev=${prevSide} fired=${firedTs !== null ? "yes" : "no"}`,
-        );
+        for (const rule of breakRules) {
+          const rid = gate.ruleId(rule);
+          let level: number;
+          let isUp: boolean;
+          let desc: string | undefined;
+          try {
+            const resolved = await gate.resolveLevel(rule, baseCache);
+            level = resolved.level;
+            isUp = resolved.isUp;
+            desc = resolved.desc;
+          } catch (e) {
+            console.error(`resolve ${rid} failed: ${e}`);
+            continue;
+          }
 
-        if (firedTs !== null && firedPrice !== null) {
-          const direction = isUp ? "上破" : "下破";
-          const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice, desc);
-          await ctx.runMutation(internal.market.insertAlerts, {
-            alerts: [
-              {
-                ts: now,
-                firedTs,
-                exchange: g.exchange,
-                symbol: g.symbol,
-                label: rule.label,
-                direction,
-                level,
-                price: firedPrice,
-                text,
-              },
-            ],
-          });
-          await sendTelegram(text);
+          const prev = stateByKey.get(rid);
+          const prevSide = prev?.side;
+          const prevWick = prev?.wickDone;
+          const sameLevel =
+            prev !== undefined && Math.abs(prev.level - level) < 1e-9;
+
+          // 首次布防（尚无 15m 扫描位点）或关键位滚动：只按最新收盘布防，不回扫历史。
+          const rearm = !sameLevel || prevChecked === undefined;
+          let res: { events: gate.BreakEvent[]; side: gate.Side; wickDone: boolean };
+          if (rearm) {
+            const last = rows.length > 0 ? rows[rows.length - 1] : undefined;
+            const side: gate.Side = last
+              ? (last.c >= level ? "above" : "below")
+              : (prevSide ?? "below");
+            res = { events: [], side, wickDone: false };
+          } else {
+            res = gate.scanBreakout(rows, level, isUp, prevSide, prevWick);
+          }
+
+          const changed =
+            res.side !== prevSide ||
+            !sameLevel ||
+            res.wickDone !== (prevWick ?? false);
+          if (changed && (rows.length > 0 || prev !== undefined)) {
+            await ctx.runMutation(internal.market.upsertRuleState, {
+              ruleKey: rid,
+              side: res.side,
+              level,
+              wickDone: res.wickDone,
+            });
+          }
+
+          console.log(
+            `${rule.label} ${g.exchange} ${g.symbol} level=${level} side=${res.side} ` +
+              `prev=${prevSide} events=${res.events.length}`,
+          );
+
+          for (const ev of res.events) {
+            const direction = isUp ? "上破" : "下破";
+            const text = gate.buildMessage(
+              rule,
+              level,
+              isUp,
+              ev.ts,
+              ev.price,
+              desc,
+              ev.kind,
+            );
+            await ctx.runMutation(internal.market.insertAlerts, {
+              alerts: [
+                {
+                  ts: now,
+                  firedTs: ev.ts,
+                  exchange: g.exchange,
+                  symbol: g.symbol,
+                  label: rule.label,
+                  direction,
+                  signal: ev.kind,
+                  level,
+                  price: ev.price,
+                  text,
+                },
+              ],
+            });
+            await sendTelegram(text);
+          }
         }
       }
     }

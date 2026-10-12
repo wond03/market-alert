@@ -123,6 +123,8 @@
   .rule-ops { display: flex; gap: 6px; flex: none; }
   .rule-ops button.on { color: #4caf50; border-color: #2e5a33; }
   .rule-ops button.off { color: var(--muted); }
+  .alert-hint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+  .alert-hint b { color: var(--text); font-weight: 600; }
   .alert-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
   .alert-item { font-size: 12px; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--border); }
   .alert-item:last-child { border-bottom: 0; }
@@ -192,6 +194,7 @@
             <button id="rfCancel" style="display:none">取消编辑</button>
           </div>
         </div>
+        <div class="alert-hint">「突破」类规则统一按 <b>15 分钟 K 线</b> 判定：收盘站上/跌破关键位为「实体突破」，仅有最高/最低触及而未收盘突破为「影线突破」，两种都会推送并在文案里标注。上面的「周期/偏移」只用于计算「前N根K线」的关键位。</div>
       </div>
       <div class="alert-sec">
         <div class="alert-sec-title">现有规则</div>
