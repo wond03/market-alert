@@ -52,42 +52,50 @@ export default defineSchema({
     text: v.string(),
   }).index("by_ts", ["ts"]),
 
-  // 纸面跟踪：每个 (交易所:标的:field:dir) 的 15m 布防状态（仅记录，不推送/不交易）
-  paperState: defineTable({
+  // SMC 记录器：每个 (交易所:标的) 已处理到的最新 15m K 线时间
+  smcState: defineTable({
     key: v.string(),
-    level: v.number(),
-    side: v.union(v.literal("above"), v.literal("below")),
-    wickDone: v.boolean(),
     checked: v.number(),
   }).index("by_key", ["key"]),
 
-  // 纸面跟踪：影线逆势候选信号与假设成交（kept=true 才会被止损止盈管理）
-  paperTrades: defineTable({
+  // SMC 记录器：流动性扫荡候选信号与假设成交（只记录，不推送/不交易）
+  smcSignals: defineTable({
     exchange: v.string(),
     symbol: v.string(),
-    field: v.string(), // high | low
-    dir: v.string(), // up | down
-    tradeDir: v.string(), // short | long
     sigTs: v.number(),
-    level: v.number(),
+    level: v.number(), // 被扫荡的参考位
+    levelKind: v.string(), // session_high | session_low | swing_high | swing_low
+    sweepSide: v.string(), // up | down（哪一侧被扫）
+    bias: v.string(), // reversal | continuation
+    tradeDir: v.string(), // long | short
     entryPrice: v.number(),
-    entryTs: v.number(),
     pen: v.number(), // 刺破幅度
-    trend1h: v.number(), // 信号时 1h 趋势
-    vol24h: v.number(), // 24h 波动率
+    rangeHigh: v.optional(v.number()),
+    rangeLow: v.optional(v.number()),
+    posPct: v.optional(v.number()), // 在 dealing range 中的位置 0..1
+    zone: v.string(), // premium | discount | mid
+    trend1h: v.string(), // bull | bear | range
+    trend15: v.string(),
+    align1h: v.boolean(), // 该方向是否与 1h 结构同向
+    align15: v.boolean(),
+    fvgAbove: v.optional(v.number()), // 最近未填补 FVG 距现价（比例）
+    fvgBelow: v.optional(v.number()),
+    fvgAboveDir: v.optional(v.string()),
+    fvgBelowDir: v.optional(v.string()),
     sl: v.number(),
     tp: v.number(),
     holdH: v.number(),
-    status: v.string(), // open | closed | skipped
-    skipReason: v.optional(v.string()),
+    status: v.string(), // open | closed
     exitTs: v.optional(v.number()),
     exitPrice: v.optional(v.number()),
     reason: v.optional(v.string()), // stop | target | timeout
     gross: v.optional(v.number()),
     net: v.optional(v.number()),
+    mfe: v.optional(v.number()), // 最大有利波动
+    mae: v.optional(v.number()), // 最大不利波动
     openedAt: v.number(),
     closedAt: v.optional(v.number()),
   })
     .index("by_status", ["status"])
-    .index("by_entryTs", ["entryTs"]),
+    .index("by_sigTs", ["sigTs"]),
 });

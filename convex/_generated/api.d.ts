@@ -15,6 +15,7 @@ import type * as gate from "../gate.js";
 import type * as market from "../market.js";
 import type * as paper from "../paper.js";
 import type * as rulesAdmin from "../rulesAdmin.js";
+import type * as smc from "../smc.js";
 
 import type {
   ApiFromModules,
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   market: typeof market;
   paper: typeof paper;
   rulesAdmin: typeof rulesAdmin;
+  smc: typeof smc;
 }>;
 
 /**
