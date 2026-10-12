@@ -55,6 +55,13 @@
   .ohlc-fill { position: absolute; box-sizing: border-box; pointer-events: none; }
   .ohlc-line { position: absolute; height: 0; pointer-events: none; }
   .ohlc-label { position: absolute; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; }
+  .smc-fill { position: absolute; box-sizing: border-box; pointer-events: none; }
+  .smc-fvg { position: absolute; box-sizing: border-box; border-left: 1px solid; border-right: 1px solid; pointer-events: none; }
+  .smc-line { position: absolute; height: 0; pointer-events: none; }
+  .smc-swing { position: absolute; font-size: 9px; font-weight: 700; line-height: 1; transform: translate(-50%, -50%); text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; }
+  .smc-sweep { position: absolute; font-size: 9px; font-weight: 700; line-height: 1; transform: translate(-50%, -50%); text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; }
+  .smc-tag { position: absolute; font-size: 9px; line-height: 1.3; white-space: nowrap; padding: 0 2px; border-radius: 2px; pointer-events: none; }
+  .smc-info { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; z-index: 2; }
   .scale-btns { position: absolute; right: 5px; bottom: 4px; display: flex; flex-direction: row; gap: 8px; z-index: 5; }
   .scale-btns button { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border); background: rgba(22,27,34,0.85); color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1; padding: 0; }
   .scale-btns button:hover { color: var(--text); }
@@ -455,6 +462,29 @@
         { key: "closeStyle", label: "收 线型", type: "select", def: "dashed", group: "线条样式", options: LINE_STYLE_OPTS },
         { key: "closeColor", label: "收 颜色", type: "color", def: "#2962FF", group: "线条样式" },
         { key: "closeWidth", label: "收 粗细", type: "int", def: 1, group: "线条样式" }
+      ],
+      series: [],
+      calc: null
+    },
+    smc: {
+      name: "SMC 结构[LuxAlgo]", pane: "main", type: "smc",
+      params: [
+        { key: "swingLen", label: "摆动结构长度", type: "int", def: 50, group: "结构" },
+        { key: "internalLen", label: "内部结构长度", type: "int", def: 5, group: "结构" },
+        { key: "showSwingStruct", label: "摆动结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
+        { key: "showInternal", label: "内部结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
+        { key: "showSwings", label: "标注摆动点 HH/HL/LH/LL", type: "bool", def: false, group: "结构" },
+        { key: "showStrongWeak", label: "强弱高/低", type: "bool", def: true, group: "结构" },
+        { key: "showZones", label: "溢价/折价区", type: "bool", def: false, group: "结构" },
+        { key: "showSwingOB", label: "摆动订单块", type: "bool", def: false, group: "订单块" },
+        { key: "showInternalOB", label: "内部订单块", type: "bool", def: true, group: "订单块" },
+        { key: "obCount", label: "订单块最多显示", type: "int", def: 5, group: "订单块" },
+        { key: "showEq", label: "等高等低 EQH/EQL", type: "bool", def: true, group: "流动性" },
+        { key: "showFvg", label: "未填补 FVG", type: "bool", def: false, group: "流动性" },
+        { key: "maxFvg", label: "FVG 最多显示", type: "int", def: 6, group: "流动性" },
+        { key: "showInfo", label: "显示信息标签", type: "bool", def: true, group: "信息" },
+        { key: "upColor", label: "看涨颜色", type: "color", def: "#089981", group: "颜色" },
+        { key: "dnColor", label: "看跌颜色", type: "color", def: "#F23645", group: "颜色" }
       ],
       series: [],
       calc: null
@@ -980,9 +1010,384 @@
     }
   }
 
+  /* ================= SMC 结构（Smart Money Concepts [LuxAlgo] 移植） ================= */
+  /* 逐条对照官方开源 Pine 脚本（CC BY-NC-SA 4.0, © LuxAlgo，「Smart Money Concepts [LuxAlgo]」）
+     移植，判定与 convex/luxSmc.ts 完全一致：
+       - 摆动点：leg(size) —— high[size] > highest(size) 视为新腿高、low[size] < lowest(size) 为新腿低；
+         leg 0→1 = 刚确认摆动低点、1→0 = 刚确认摆动高点。摆动结构 size=50，内部结构 size=5。
+       - 结构 BOS/CHoCH：收盘价上/下穿最近一个尚未被穿过的摆动高/低点；
+         上穿时原趋势为跌 → CHoCH，否则 → BOS（反之下穿同理）。
+       - 订单块(OB)：结构突破时，在「摆动点 bar → 当前 bar」区间内取 parsedLow 最小(看涨)/
+         parsedHigh 最大(看跌)的整根 K；parsedHigh/Low 含高波动 K 过滤；右侧延伸至被缓解。
+       - FVG：low[0] > high[2] 且 close[1] > high[2] 且中间 K 实体% > 自适应阈值（看跌对称）。
+       - EQH/EQL：size=3 摆动点相邻价差 < 0.1×ATR(200)。
+       - 溢价/折价区 + 强/弱高、强/弱低：由 trailing 极值给出。 */
+  var SMC_EQ_THRESH = 0.1, SMC_ATR_LEN = 200;
+
+  function smcClampInt(v, lo, hi, def) {
+    var n = parseInt(v, 10);
+    if (!isFinite(n)) n = def;
+    return Math.max(lo, Math.min(hi, n));
+  }
+  function smcTrueRange(d) {
+    var tr = new Array(d.length);
+    for (var i = 0; i < d.length; i++) {
+      if (i === 0) { tr[i] = d[i].high - d[i].low; continue; }
+      tr[i] = Math.max(d[i].high - d[i].low, Math.abs(d[i].high - d[i - 1].close), Math.abs(d[i].low - d[i - 1].close));
+    }
+    return tr;
+  }
+  function smcAtr(d, period) {
+    var tr = smcTrueRange(d), n = d.length, out = new Array(n), sum = 0;
+    for (var i = 0; i < n; i++) {
+      if (i < period) { sum += tr[i]; out[i] = (i === period - 1) ? sum / period : NaN; continue; }
+      out[i] = (out[i - 1] * (period - 1) + tr[i]) / period;
+    }
+    if (n < period) { var acc = 0; for (i = 0; i < n; i++) { acc += tr[i]; out[i] = acc / (i + 1); } }
+    var last = NaN;
+    for (i = 0; i < n; i++) { if (!isNaN(out[i])) last = out[i]; else if (!isNaN(last)) out[i] = last; }
+    return out;
+  }
+  function smcCmr(d) {
+    var tr = smcTrueRange(d), n = d.length, out = new Array(n), acc = 0;
+    for (var i = 0; i < n; i++) { acc += tr[i]; out[i] = i === 0 ? tr[i] : acc / i; }
+    return out;
+  }
+  function smcLegSeries(d, size) {
+    var n = d.length, legs = new Array(n), leg = 0;
+    for (var i = 0; i < n; i++) {
+      if (i >= size) {
+        var hiMax = -Infinity, loMin = Infinity;
+        for (var k = 0; k < size; k++) { var b = d[i - k]; if (b.high > hiMax) hiMax = b.high; if (b.low < loMin) loMin = b.low; }
+        if (d[i - size].high > hiMax) leg = 0; else if (d[i - size].low < loMin) leg = 1;
+      }
+      legs[i] = leg;
+    }
+    return legs;
+  }
+  function smcRunStructure(d, size, obFilter) {
+    var n = d.length, highs = [], lows = [], breaks = [], orderBlocks = [];
+    var legs = smcLegSeries(d, size);
+    var atrArr = smcAtr(d, SMC_ATR_LEN), cmrArr = smcCmr(d);
+    function volAt(i) { return obFilter === "range" ? cmrArr[i] : atrArr[i]; }
+    function parsedHigh(i) { var c = d[i]; var hv = c.high - c.low >= 2 * (isNaN(volAt(i)) ? Infinity : volAt(i)); return hv ? c.low : c.high; }
+    function parsedLow(i) { var c = d[i]; var hv = c.high - c.low >= 2 * (isNaN(volAt(i)) ? Infinity : volAt(i)); return hv ? c.high : c.low; }
+    var curHigh = { level: NaN, idx: -1, t: 0, crossed: false, prev: NaN };
+    var curLow = { level: NaN, idx: -1, t: 0, crossed: false, prev: NaN };
+    var trend = "range", prevClose = NaN;
+    for (var i = 0; i < n; i++) {
+      if (i >= 1 && legs[i] !== legs[i - 1]) {
+        var bi = i - size;
+        if (legs[i] === 1) {
+          curLow = { level: d[bi].low, idx: bi, t: d[bi].time, crossed: false, prev: curLow.level };
+          lows.push({ idx: bi, t: d[bi].time, price: d[bi].low, prevPrice: curLow.prev });
+        } else {
+          curHigh = { level: d[bi].high, idx: bi, t: d[bi].time, crossed: false, prev: curHigh.level };
+          highs.push({ idx: bi, t: d[bi].time, price: d[bi].high, prevPrice: curHigh.prev });
+        }
+      }
+      var close = d[i].close;
+      if (!isNaN(curHigh.level) && !isNaN(prevClose) && !curHigh.crossed && prevClose <= curHigh.level && close > curHigh.level) {
+        var tagH = trend === "bear" ? "CHoCH" : "BOS";
+        curHigh.crossed = true; trend = "bull";
+        breaks.push({ idx: i, dir: "bull", tag: tagH, level: curHigh.level, pivotIdx: curHigh.idx });
+        orderBlocks.push(smcMakeOB(d, curHigh.idx, i, "bull", parsedHigh, parsedLow));
+      }
+      if (!isNaN(curLow.level) && !isNaN(prevClose) && !curLow.crossed && prevClose >= curLow.level && close < curLow.level) {
+        var tagL = trend === "bull" ? "CHoCH" : "BOS";
+        curLow.crossed = true; trend = "bear";
+        breaks.push({ idx: i, dir: "bear", tag: tagL, level: curLow.level, pivotIdx: curLow.idx });
+        orderBlocks.push(smcMakeOB(d, curLow.idx, i, "bear", parsedHigh, parsedLow));
+      }
+      prevClose = close;
+    }
+    for (var o = 0; o < orderBlocks.length; o++) {
+      var ob = orderBlocks[o];
+      for (var k = ob.idx + 1; k < n; k++) {
+        if (ob.bias === "bull" ? d[k].low < ob.low : d[k].high > ob.high) { ob.mitigatedIdx = k; break; }
+      }
+    }
+    return { size: size, highs: highs, lows: lows, breaks: breaks, orderBlocks: orderBlocks, trendAtEnd: trend };
+  }
+  function smcMakeOB(d, pivotIdx, breakIdx, bias, parsedHigh, parsedLow) {
+    var start = Math.max(0, pivotIdx), end = breakIdx, bestIdx = start;
+    if (bias === "bull") {
+      var best = Infinity;
+      for (var k = start; k < end; k++) { var v = parsedLow(k); if (v < best) { best = v; bestIdx = k; } }
+    } else {
+      var best2 = -Infinity;
+      for (var k2 = start; k2 < end; k2++) { var v2 = parsedHigh(k2); if (v2 > best2) { best2 = v2; bestIdx = k2; } }
+    }
+    return { idx: bestIdx, t: d[bestIdx].time, high: parsedHigh(bestIdx), low: parsedLow(bestIdx), bias: bias, mitigatedIdx: null };
+  }
+  function smcFvgs(d) {
+    var n = d.length, out = [], cumAbs = 0, count = 0;
+    for (var i = 2; i < n; i++) {
+      var prev = d[i - 1], barDeltaPercent = (prev.close - prev.open) / (prev.open * 100);
+      count++; cumAbs += Math.abs(barDeltaPercent);
+      var threshold = (cumAbs / count) * 2;
+      var curLow = d[i].low, curHigh = d[i].high, last2High = d[i - 2].high, last2Low = d[i - 2].low, lastClose = prev.close;
+      if (curLow > last2High && lastClose > last2High && barDeltaPercent > threshold) out.push({ idx: i, top: curLow, bottom: last2High, dir: "bull", mitigatedIdx: null });
+      else if (curHigh < last2Low && lastClose < last2Low && -barDeltaPercent > threshold) out.push({ idx: i, top: last2Low, bottom: curHigh, dir: "bear", mitigatedIdx: null });
+    }
+    for (var f = 0; f < out.length; f++) {
+      for (var k = out[f].idx + 1; k < n; k++) { if (out[f].dir === "bull" ? d[k].low < out[f].bottom : d[k].high > out[f].top) { out[f].mitigatedIdx = k; break; } }
+    }
+    return out;
+  }
+  function smcEqhEql(d, size, threshold) {
+    var n = d.length, legs = smcLegSeries(d, size), atrArr = smcAtr(d, SMC_ATR_LEN), out = [];
+    var curHigh = { level: NaN, idx: -1 }, curLow = { level: NaN, idx: -1 };
+    for (var i = 1; i < n; i++) {
+      if (legs[i] === legs[i - 1]) continue;
+      var bi = i - size, eps = threshold * atrArr[i];
+      if (legs[i] === 1) {
+        if (!isNaN(curLow.level) && !isNaN(eps) && Math.abs(curLow.level - d[bi].low) < eps) out.push({ fromIdx: curLow.idx, toIdx: bi, price: curLow.level, kind: "EQL" });
+        curLow = { level: d[bi].low, idx: bi };
+      } else {
+        if (!isNaN(curHigh.level) && !isNaN(eps) && Math.abs(curHigh.level - d[bi].high) < eps) out.push({ fromIdx: curHigh.idx, toIdx: bi, price: curHigh.level, kind: "EQH" });
+        curHigh = { level: d[bi].high, idx: bi };
+      }
+    }
+    return out;
+  }
+  function smcTrailing(d, size) {
+    var n = d.length, legs = smcLegSeries(d, size);
+    var top = NaN, bottom = NaN, topIdx = -1, bottomIdx = -1;
+    for (var i = 0; i < n; i++) {
+      if (i >= 1 && legs[i] !== legs[i - 1]) {
+        var bi = i - size;
+        if (legs[i] === 1) { bottom = d[bi].low; bottomIdx = bi; }
+        else { top = d[bi].high; topIdx = bi; }
+      }
+      if (isNaN(top) || d[i].high > top) { top = d[i].high; topIdx = i; }
+      if (isNaN(bottom) || d[i].low < bottom) { bottom = d[i].low; bottomIdx = i; }
+    }
+    return { top: top, bottom: bottom, topIdx: topIdx, bottomIdx: bottomIdx };
+  }
+
+  function drawSMC(entry) {
+    var el = entry.smcEl;
+    if (!el) return;
+    el.innerHTML = "";
+    if (!entry.smcOn) return;
+    var d = entry.data;
+    if (!d || d.length < 30) return;
+    var p = active.smc.params;
+    var swingLen = smcClampInt(p.swingLen, 5, 200, 50);
+    var internalLen = smcClampInt(p.internalLen, 2, 50, 5);
+    var upCol = p.upColor || "#089981", dnCol = p.dnColor || "#F23645";
+
+    var ts = entry.mainChart.timeScale();
+    var vr = null;
+    try { vr = ts.getVisibleLogicalRange(); } catch (e) {}
+    if (!vr) return;
+    var plotW = ts.width ? ts.width() : entry.mainWrap.clientWidth;
+    var axisH = 0;
+    try { axisH = ts.height() || 0; } catch (e) {}
+    var boxH = entry.mainWrap.clientHeight - axisH;
+    if (boxH <= 0) boxH = entry.mainWrap.clientHeight;
+    function coord(i) { try { var c = ts.logicalToCoordinate(i); return (c === null || !isFinite(c)) ? null : c; } catch (e) { return null; } }
+    function yOf(v) { try { var y = entry.candles.priceToCoordinate(v); return (y === null || !isFinite(y)) ? null : y; } catch (e) { return null; } }
+    function inView(i) { return i >= Math.floor(vr.from) - 2 && i <= Math.ceil(vr.to) + 2; }
+    function xFrom(idx, extend) {
+      var c = coord(idx);
+      if (c === null) return null;
+      return extend ? Math.max(0, c) : Math.max(0, Math.min(plotW, c));
+    }
+
+    var sw = smcRunStructure(d, swingLen, "atr");
+    var internal = p.showInternal ? smcRunStructure(d, internalLen, "atr") : null;
+
+    // 1) 溢价/折价区 + 强弱高/低
+    if (p.showZones || p.showStrongWeak) {
+      var tr = smcTrailing(d, swingLen);
+      if (tr.top > tr.bottom) {
+        if (p.showZones) {
+          var xz = xFrom(Math.min(tr.topIdx, tr.bottomIdx), true);
+          if (xz !== null) {
+            var w0 = Math.max(0, plotW - xz);
+            function band(t0, t1, col, lab, labY) {
+              var y0 = yOf(t0), y1 = yOf(t1);
+              if (y0 === null || y1 === null) return;
+              var top = Math.max(0, Math.min(y0, y1)), bot = Math.min(boxH, Math.max(y0, y1));
+              if (bot - top < 1) return;
+              var bd = document.createElement("div");
+              bd.className = "smc-fill";
+              bd.style.left = xz + "px"; bd.style.width = w0 + "px"; bd.style.top = top + "px"; bd.style.height = (bot - top) + "px";
+              bd.style.background = hexToRgba(col, 0.08);
+              el.appendChild(bd);
+              if (lab) {
+                var tg = document.createElement("div");
+                tg.className = "smc-tag"; tg.textContent = lab; tg.style.color = col;
+                tg.style.left = (xz + 3) + "px"; tg.style.top = labY + "px";
+                el.appendChild(tg);
+              }
+            }
+            band(tr.top, 0.95 * tr.top + 0.05 * tr.bottom, dnCol, "Premium", yOf(tr.top));
+            band(0.525 * tr.top + 0.475 * tr.bottom, 0.525 * tr.bottom + 0.475 * tr.top, "#878b94", "Equilibrium", null);
+            band(0.95 * tr.bottom + 0.05 * tr.top, tr.bottom, upCol, "Discount", null);
+          }
+        }
+        if (p.showStrongWeak) {
+          var trend = sw.trendAtEnd;
+          var hiLab = trend === "bear" ? "Strong High" : "Weak High";
+          var loLab = trend === "bull" ? "Strong Low" : "Weak Low";
+          [[tr.top, tr.topIdx, dnCol, hiLab], [tr.bottom, tr.bottomIdx, upCol, loLab]].forEach(function (it) {
+            var xs = xFrom(it[1], true), y = yOf(it[0]);
+            if (xs === null || y === null) return;
+            var ln = document.createElement("div");
+            ln.className = "smc-line";
+            ln.style.left = xs + "px"; ln.style.width = Math.max(0, plotW - xs) + "px"; ln.style.top = y + "px";
+            ln.style.borderTopStyle = "solid"; ln.style.borderTopColor = hexToRgba(it[2], 0.85);
+            el.appendChild(ln);
+            var tg = document.createElement("div");
+            tg.className = "smc-tag"; tg.textContent = it[3];
+            tg.style.color = it[2]; tg.style.right = "4px"; tg.style.top = (y - 12) + "px";
+            el.appendChild(tg);
+          });
+        }
+      }
+    }
+
+    // 2) FVG
+    if (p.showFvg) {
+      var fvgs = smcFvgs(d).filter(function (f) { return f.mitigatedIdx === null; });
+      var maxF = smcClampInt(p.maxFvg, 1, 30, 6);
+      if (fvgs.length > maxF) fvgs = fvgs.slice(fvgs.length - maxF);
+      fvgs.forEach(function (f) {
+        var xa = xFrom(f.idx, true); if (xa === null) return;
+        var yA = yOf(f.top), yB = yOf(f.bottom);
+        if (yA === null || yB === null) return;
+        var w = Math.max(0, plotW - xa); if (w < 1) return;
+        var col = f.dir === "bull" ? upCol : dnCol;
+        var box = document.createElement("div");
+        box.className = "smc-fvg";
+        box.style.left = xa + "px"; box.style.width = w + "px";
+        box.style.top = Math.max(0, Math.min(yA, yB)) + "px"; box.style.height = Math.abs(yB - yA) + "px";
+        box.style.background = hexToRgba(col, 0.12); box.style.borderColor = hexToRgba(col, 0.55);
+        el.appendChild(box);
+        var t = document.createElement("div");
+        t.className = "smc-tag"; t.textContent = f.dir === "bull" ? "FVG↑" : "FVG↓";
+        t.style.color = col; t.style.background = hexToRgba(col, 0.15);
+        t.style.left = (xa + 2) + "px"; t.style.top = Math.max(0, Math.min(yA, yB)) + "px";
+        el.appendChild(t);
+      });
+    }
+
+    // 3) 订单块
+    function drawOBs(res, internalFlag) {
+      var obs = res.orderBlocks.filter(function (o) { return o.mitigatedIdx === null; });
+      var cnt = smcClampInt(p.obCount, 1, 20, 5);
+      if (obs.length > cnt) obs = obs.slice(obs.length - cnt);
+      obs.forEach(function (o) {
+        var xa = xFrom(o.idx, true); if (xa === null) return;
+        var yA = yOf(o.high), yB = yOf(o.low);
+        if (yA === null || yB === null) return;
+        var w = Math.max(0, plotW - xa); if (w < 1) return;
+        var col = o.bias === "bull" ? upCol : dnCol;
+        var box = document.createElement("div");
+        box.className = "smc-fvg";
+        box.style.left = xa + "px"; box.style.width = w + "px";
+        box.style.top = Math.max(0, Math.min(yA, yB)) + "px"; box.style.height = Math.max(1, Math.abs(yB - yA)) + "px";
+        box.style.background = hexToRgba(col, internalFlag ? 0.14 : 0.2);
+        box.style.borderColor = internalFlag ? "transparent" : hexToRgba(col, 0.7);
+        el.appendChild(box);
+        if (!internalFlag) {
+          var t = document.createElement("div");
+          t.className = "smc-tag"; t.textContent = o.bias === "bull" ? "OB+" : "OB-";
+          t.style.color = col; t.style.background = hexToRgba(col, 0.18);
+          t.style.left = (xa + 2) + "px"; t.style.top = Math.max(0, Math.min(yA, yB)) + "px";
+          el.appendChild(t);
+        }
+      });
+    }
+    if (p.showInternalOB && internal) drawOBs(internal, true);
+    if (p.showSwingOB) drawOBs(sw, false);
+
+    // 4) 结构突破（BOS / CHoCH）
+    function drawBreaks(res, internalFlag) {
+      res.breaks.forEach(function (br) {
+        if (!inView(br.idx)) return;
+        var x0 = coord(br.pivotIdx), x1 = coord(br.idx), y = yOf(br.level);
+        if (x0 === null || x1 === null || y === null) return;
+        var col = br.dir === "bull" ? upCol : dnCol;
+        var ln = document.createElement("div");
+        ln.className = "smc-line";
+        ln.style.left = Math.max(0, Math.min(x0, x1)) + "px"; ln.style.width = Math.abs(x1 - x0) + "px";
+        ln.style.top = y + "px"; ln.style.borderTopStyle = internalFlag ? "dashed" : "solid";
+        ln.style.borderTopColor = hexToRgba(col, internalFlag ? 0.8 : 0.95);
+        el.appendChild(ln);
+        var mid = (x0 + x1) / 2;
+        var tg = document.createElement("div");
+        tg.className = "smc-tag"; tg.textContent = br.tag;
+        tg.style.color = col; tg.style.background = hexToRgba(col, 0.16);
+        tg.style.left = mid + "px"; tg.style.top = (y + (br.dir === "bull" ? -14 : 2)) + "px";
+        if (internalFlag) { tg.style.fontSize = "8px"; tg.style.opacity = "0.85"; }
+        el.appendChild(tg);
+      });
+    }
+    if (p.showInternal && internal) drawBreaks(internal, true);
+    if (p.showSwingStruct) drawBreaks(sw, false);
+
+    // 5) 等高等低
+    if (p.showEq) {
+      smcEqhEql(d, 3, SMC_EQ_THRESH).forEach(function (e) {
+        if (!inView(e.fromIdx) && !inView(e.toIdx)) return;
+        var x0 = coord(e.fromIdx), x1 = coord(e.toIdx), y = yOf(e.price);
+        if (x0 === null || x1 === null || y === null) return;
+        var col = e.kind === "EQH" ? dnCol : upCol;
+        var ln = document.createElement("div");
+        ln.className = "smc-line";
+        ln.style.left = Math.max(0, Math.min(x0, x1)) + "px"; ln.style.width = Math.abs(x1 - x0) + "px";
+        ln.style.top = y + "px"; ln.style.borderTopStyle = "dotted"; ln.style.borderTopColor = hexToRgba(col, 0.9);
+        el.appendChild(ln);
+        var tg = document.createElement("div");
+        tg.className = "smc-tag"; tg.textContent = e.kind; tg.style.color = col;
+        tg.style.left = ((x0 + x1) / 2) + "px"; tg.style.top = (y + (e.kind === "EQH" ? -13 : 2)) + "px";
+        el.appendChild(tg);
+      });
+    }
+
+    // 6) 摆动点 HH/HL/LH/LL
+    if (p.showSwings) {
+      sw.highs.forEach(function (s) {
+        if (!inView(s.idx)) return;
+        var x = coord(s.idx), y = yOf(s.price);
+        if (x === null || y === null) return;
+        var tag = isNaN(s.prevPrice) ? "H" : (s.price > s.prevPrice ? "HH" : "LH");
+        var m = document.createElement("div");
+        m.className = "smc-swing"; m.textContent = tag; m.style.color = dnCol;
+        m.style.left = x + "px"; m.style.top = (y - 9) + "px";
+        el.appendChild(m);
+      });
+      sw.lows.forEach(function (s) {
+        if (!inView(s.idx)) return;
+        var x = coord(s.idx), y = yOf(s.price);
+        if (x === null || y === null) return;
+        var tag = isNaN(s.prevPrice) ? "L" : (s.price > s.prevPrice ? "HL" : "LL");
+        var m = document.createElement("div");
+        m.className = "smc-swing"; m.textContent = tag; m.style.color = upCol;
+        m.style.left = x + "px"; m.style.top = (y + 9) + "px";
+        el.appendChild(m);
+      });
+    }
+
+    // 7) 信息标签
+    if (p.showInfo) {
+      var tlab = sw.trendAtEnd === "bull" ? "看涨" : (sw.trendAtEnd === "bear" ? "看跌" : "震荡");
+      var info = document.createElement("div");
+      info.className = "smc-info";
+      info.textContent = "SMC[LuxAlgo] · 摆动结构:" + tlab + " · 突破 " + sw.breaks.length + " · 订单块 " + sw.orderBlocks.length;
+      info.style.color = sw.trendAtEnd === "bull" ? upCol : (sw.trendAtEnd === "bear" ? dnCol : "#9aa4b2");
+      el.appendChild(info);
+    }
+  }
+
   function redrawOverlays(entry) {
     if (entry.sessionsOn) drawSessions(entry);
     drawOHLC(entry);
+    if (entry.smcOn) drawSMC(entry);
   }
 
   // 视图不在最右（最新）时，显示「回到最新」浮动按钮。
@@ -1010,12 +1415,14 @@
     entry.subPanes = [];
     if (entry.sessionsEl) { entry.sessionsEl.innerHTML = ""; entry.sessionsOn = false; }
     if (entry.ohlcEl) { entry.ohlcEl.innerHTML = ""; entry.ohlcOn = false; }
+    if (entry.smcEl) { entry.smcEl.innerHTML = ""; entry.smcOn = false; }
 
     Object.keys(IND).forEach(function (key) {
       var def = IND[key];
       if (def.pane === "main") {
         if (def.type === "sessions") { if (active[key].on) entry.sessionsOn = true; return; }
         if (def.type === "prevOHLC") { if (active[key].on) entry.ohlcOn = true; return; }
+        if (def.type === "smc") { if (active[key].on) entry.smcOn = true; return; }
         if (!active[key].on) return;
         var series = def.series.map(function (sp) { return makeSeries(entry.mainChart, sp); });
         entry.mainOverlays.push({ def: def, key: key, series: series });
@@ -1441,6 +1848,7 @@
         '<div class="main-wrap">' +
           '<div class="sessions-overlay" data-role="sessions"></div>' +
           '<div class="sessions-overlay" data-role="ohlc"></div>' +
+          '<div class="sessions-overlay" data-role="smc"></div>' +
           '<div class="chart-main" data-role="main"></div>' +
           '<button class="rt-btn" data-role="btnNow" title="回到最新">\u00BB</button>' +
           '<div class="scale-btns">' +
@@ -1456,6 +1864,7 @@
       var mainWrap = panel.querySelector('.main-wrap');
       var sessionsEl = panel.querySelector('[data-role="sessions"]');
       var ohlcEl = panel.querySelector('[data-role="ohlc"]');
+      var smcEl = panel.querySelector('[data-role="smc"]');
       var mc = LightweightCharts.createChart(mainEl, Object.assign({}, BASE_CHART, { width: mainEl.clientWidth || 600, height: mainEl.clientHeight || 520 }));
       var candles = mc.addCandlestickSeries({ upColor: COL.up, downColor: COL.down, borderUpColor: COL.up, borderDownColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
       new ResizeObserver(function () { if (mainEl.clientWidth > 0) { mc.applyOptions({ width: mainEl.clientWidth, height: mainEl.clientHeight }); redrawOverlays(entry); } }).observe(mainEl);
@@ -1466,7 +1875,7 @@
       var entry = {
         inst: inst, panel: panel, data: [], mainChart: mc, candles: candles,
         subContainer: subEl, mainOverlays: [], subPanes: [], autoScale: true, logScale: false,
-        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, ohlcEl: ohlcEl, ohlcOn: false, btnNow: btnNow
+        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, ohlcEl: ohlcEl, ohlcOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow
       };
       mc.timeScale().subscribeVisibleLogicalRangeChange(function () { redrawOverlays(entry); updateNowBtn(entry); });
       btnNow.addEventListener("click", function () { try { mc.timeScale().scrollToRealTime(); } catch (e) {} updateNowBtn(entry); });

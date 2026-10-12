@@ -12,6 +12,7 @@ import type * as alerts from "../alerts.js";
 import type * as crons from "../crons.js";
 import type * as exchanges from "../exchanges.js";
 import type * as gate from "../gate.js";
+import type * as luxSmc from "../luxSmc.js";
 import type * as market from "../market.js";
 import type * as paper from "../paper.js";
 import type * as rulesAdmin from "../rulesAdmin.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   exchanges: typeof exchanges;
   gate: typeof gate;
+  luxSmc: typeof luxSmc;
   market: typeof market;
   paper: typeof paper;
   rulesAdmin: typeof rulesAdmin;
