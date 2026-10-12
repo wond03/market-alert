@@ -52,6 +52,15 @@ export const SESSIONS: Session[] = [
 export const SESSION_INTERVAL = "5m";
 export const SESSION_CANDLE_LIMIT = 700; // 约 2.4 天，足够覆盖最近一个已结束时段
 
+// 时段循环顺序：亚洲盘 → 伦敦盘 → 纽约盘 →（次日）亚洲盘
+export const SESSION_CYCLE = ["亚洲盘", "伦敦盘", "纽约盘"];
+// 「前一时段」映射：当前时段的上一段（亚洲盘取前一个纽约盘）
+export const SESSION_PREV: Record<string, string> = {
+  亚洲盘: "纽约盘",
+  伦敦盘: "亚洲盘",
+  纽约盘: "伦敦盘",
+};
+
 export type Side = "above" | "below";
 
 export type RuleDoc = {
@@ -161,6 +170,21 @@ export function inWindow(m: number, start: number, end: number): boolean {
   return m >= start || m < end;
 }
 
+// 该时刻所处时段名；重叠时取循环顺序靠后的那个（伦敦/纽约重叠时算纽约盘）。
+export function currentSessionName(now: number): string | null {
+  let best: string | null = null;
+  let bestIdx = -1;
+  for (const s of SESSIONS) {
+    if (!inWindow(tzMinutes(now, s.tz), s.start, s.end)) continue;
+    const idx = SESSION_CYCLE.indexOf(s.name);
+    if (idx > bestIdx) {
+      best = s.name;
+      bestIdx = idx;
+    }
+  }
+  return best;
+}
+
 // 找出「最近一个已结束的交易时段」的高/低（跳过仍在进行中的那个）。
 export function latestCompletedSession(
   candles: Candle[],
@@ -197,6 +221,35 @@ export function latestCompletedSession(
   return best;
 }
 
+type SessionRange = { name: string; high: number; low: number; endT: number; open: boolean };
+
+// candles 中「最近一段」指定时段的区间（该段可能仍在进行中，open=true）。
+function latestSessionRange(
+  candles: Candle[],
+  s: Session,
+  now: number,
+): SessionRange | null {
+  if (candles.length === 0) return null;
+  const lastIdx = candles.length - 1;
+  const mins = candles.map((c) => tzMinutes(c.t, s.tz));
+  let range: SessionRange | null = null;
+  let i = 0;
+  while (i < candles.length) {
+    if (!inWindow(mins[i], s.start, s.end)) { i++; continue; }
+    let high = -Infinity, low = Infinity, j = i;
+    while (j < candles.length && inWindow(mins[j], s.start, s.end)) {
+      high = Math.max(high, candles[j].h);
+      low = Math.min(low, candles[j].l);
+      j++;
+    }
+    const endIdx = j - 1;
+    const open = endIdx >= lastIdx && inWindow(tzMinutes(now, s.tz), s.start, s.end);
+    range = { name: s.name, high, low, endT: candles[endIdx].t, open };
+    i = j;
+  }
+  return range;
+}
+
 async function prevSessionLevel(
   exchange: Exchange,
   symbol: string,
@@ -217,9 +270,23 @@ async function prevSessionLevel(
     );
     cache.set(cacheKey, candles);
   }
-  const sess = latestCompletedSession(candles);
-  if (!sess) throw new Error("尚无可用的已结束交易时段");
-  return { level: field === "low" ? sess.low : sess.high, name: sess.name };
+  const now = Math.floor(Date.now() / 1000);
+  // 参考时段：处于某时段时取其「前一段」（亚洲盘→纽约盘、伦敦盘→亚洲盘、纽约盘→伦敦盘）；
+  // 时段间隙时取「最近一个已结束的时段」。
+  let targetName: string;
+  const cur = currentSessionName(now);
+  if (cur) {
+    targetName = SESSION_PREV[cur] ?? cur;
+  } else {
+    const sess = latestCompletedSession(candles);
+    if (!sess) throw new Error("尚无可用的交易时段参考");
+    targetName = sess.name;
+  }
+  const s = SESSIONS.find((x) => x.name === targetName);
+  if (!s) throw new Error(`未知时段: ${targetName}`);
+  const r = latestSessionRange(candles, s, now);
+  if (!r) throw new Error(`暂无「${targetName}」区间数据`);
+  return { level: field === "low" ? r.low : r.high, name: r.name };
 }
 
 // 返回 (level, isUp, desc)。isUp=true 表示关注向上穿越。

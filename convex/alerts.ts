@@ -270,8 +270,8 @@ export const pollAndCheck = internalAction({
           }
 
           console.log(
-            `${rule.label} ${g.exchange} ${g.symbol} level=${level} side=${res.side} ` +
-              `prev=${prevSide} events=${res.events.length}`,
+            `${rule.label} ${g.exchange} ${g.symbol} desc=${desc} level=${level} ` +
+              `side=${res.side} prev=${prevSide} events=${res.events.length}`,
           );
 
           for (const ev of res.events) {
