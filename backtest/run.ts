@@ -445,27 +445,59 @@ function filterByPenetration(
 /* ================= 滚动样本外 ================= */
 
 type Config = { penMin: number; sl: number; tp: number; H: number };
-type Stats = { n: number; net: number; win: number; sum: number };
+type Stats = { n: number; net: number; win: number; sum: number; sd: number; t: number };
 
-function evalConfig(ents: Event[], series: Record<string, Candle[]>, cfg: Config): Stats {
+// 某配置下的每笔净收益序列。
+function tradeNets(ents: Event[], series: Record<string, Candle[]>, cfg: Config): number[] {
   const f = cfg.penMin > 0 ? filterByPenetration(ents, series, null, cfg.penMin) : ents;
-  let n = 0;
-  let sum = 0;
-  let wins = 0;
+  const out: number[] = [];
   for (const e of f) {
     const t = simTrade(series[e.symbol], e, cfg.sl, cfg.tp, cfg.H);
-    if (!t) continue;
-    n++;
-    sum += t.net;
-    if (t.net > 0) wins++;
+    if (t) out.push(t.net);
   }
-  return { n, net: n ? sum / n : 0, win: n ? wins / n : 0, sum };
+  return out;
+}
+
+// 汇总为一个配置的统计（含样本标准差 sd 与 t = mean / (sd/√n)）。
+function statsOf(nets: number[]): Stats {
+  const n = nets.length;
+  const sum = nets.reduce((a, b) => a + b, 0);
+  const net = n ? sum / n : 0;
+  const sd = n > 1 ? Math.sqrt(nets.reduce((a, x) => a + (x - net) ** 2, 0) / (n - 1)) : 0;
+  const wins = nets.filter((x) => x > 0).length;
+  const t = n > 1 && sd > 0 ? net / (sd / Math.sqrt(n)) : 0;
+  return { n, net, win: n ? wins / n : 0, sum, sd, t };
+}
+
+function evalConfig(ents: Event[], series: Record<string, Candle[]>, cfg: Config): Stats {
+  return statsOf(tradeNets(ents, series, cfg));
 }
 
 const PEN_GRID = [0, 0.0005, 0.001, 0.002, 0.003];
 const SL_GRID = [0.003, 0.004, 0.005];
 const TP_GRID = [0.004, 0.006, 0.008];
 const H_GRID = [4, 8];
+
+// 在给定（训练）样本上按净均选最优配置；返回试过的组合数以便披露多重检验规模。
+function selectBest(train: Event[], series: Record<string, Candle[]>): { best: { cfg: Config; stats: Stats } | null; tried: number } {
+  let best: { cfg: Config; stats: Stats } | null = null;
+  let tried = 0;
+  for (const penMin of PEN_GRID) {
+    for (const sl of SL_GRID) {
+      for (const tp of TP_GRID) {
+        if (tp <= sl) continue;
+        for (const H of H_GRID) {
+          tried++;
+          const cfg: Config = { penMin, sl, tp, H };
+          const st = evalConfig(train, series, cfg);
+          if (st.n < 15) continue;
+          if (!best || st.net > best.stats.net) best = { cfg, stats: st };
+        }
+      }
+    }
+  }
+  return { best, tried };
+}
 
 function walkForward(ents: Event[], series: Record<string, Candle[]>, title: string, K = 4) {
   const sorted = [...ents].sort((a, b) => a.ts - b.ts);
@@ -482,59 +514,54 @@ function walkForward(ents: Event[], series: Record<string, Candle[]>, title: str
     blocks[idx].push(e);
   }
   console.log(`\n=== ${title} · 滚动样本外（扩窗 K=${K}） ===`);
-  const oos: { train: Stats; test: Stats }[] = [];
+  const oosNets: number[] = [];
+  let tried = 0;
+  let foldPositive = 0;
+  let folds = 0;
   for (let k = 1; k < K; k++) {
     const train = blocks.slice(0, k).flat();
     const test = blocks[k];
-    let best: { cfg: Config; stats: Stats } | null = null;
-    for (const penMin of PEN_GRID) {
-      for (const sl of SL_GRID) {
-        for (const tp of TP_GRID) {
-          if (tp <= sl) continue;
-          for (const H of H_GRID) {
-            const cfg: Config = { penMin, sl, tp, H };
-            const st = evalConfig(train, series, cfg);
-            if (st.n < 15) continue;
-            if (!best || st.net > best.stats.net) best = { cfg, stats: st };
-          }
-        }
-      }
-    }
-    if (!best) {
+    const sel = selectBest(train, series);
+    tried = sel.tried;
+    if (!sel.best) {
       console.log(`  fold ${k}: 训练样本不足（跳过）`);
       continue;
     }
-    const te = evalConfig(test, series, best.cfg);
-    oos.push({ train: best.stats, test: te });
+    const nets = tradeNets(test, series, sel.best.cfg);
+    oosNets.push(...nets);
+    folds++;
+    const te = statsOf(nets);
+    if (te.net > 0) foldPositive++;
     console.log(
-      `  fold ${k}: 选参 pen≥${pct(best.cfg.penMin)} SL${pct(best.cfg.sl)} TP${pct(best.cfg.tp)} H${best.cfg.H}h` +
-        `  | 训练 n=${pad(best.stats.n, 3)} 净均 ${pct(best.stats.net).padStart(7)}` +
-        `  || 测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)}`,
+      `  fold ${k}: 选参 pen≥${pct(sel.best.cfg.penMin)} SL${pct(sel.best.cfg.sl)} TP${pct(sel.best.cfg.tp)} H${sel.best.cfg.H}h` +
+        `  | 训练 n=${pad(sel.best.stats.n, 3)} 净均 ${pct(sel.best.stats.net).padStart(7)}` +
+        `  || 测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)} t=${te.t.toFixed(2)}`,
     );
   }
-  let n = 0;
-  let sum = 0;
-  let wins = 0;
-  for (const o of oos) {
-    n += o.test.n;
-    sum += o.test.sum;
-    wins += o.test.win * o.test.n;
-  }
+  const pooled = statsOf(oosNets);
   console.log(
-    `  —— 样本外汇总：n=${n}  净均 ${pct(n ? sum / n : 0)}  胜率 ${pct(n ? wins / n : 0)}  累计净 ${pct(sum)}`,
+    `  —— 样本外汇总：n=${pooled.n}  净均 ${pct(pooled.net)}  胜率 ${pct(pooled.win)}  累计净 ${pct(pooled.sum)}` +
+      `  t=${pooled.t.toFixed(2)}  （每折试 ${tried} 组 · 正收益折 ${foldPositive}/${folds}）`,
   );
 }
 
-// 固定配置的 70/30 时间切分（选参无，仅看已知最优配置的样本外表现）。
-function holdout(ents: Event[], series: Record<string, Candle[]>, title: string, cfg: Config, split = 0.7) {
+// 真·嵌套样本外：仅用前 split 段选参，后段从未参与选参，再评一次。
+function nestedHoldout(ents: Event[], series: Record<string, Candle[]>, title: string, split = 0.7) {
   const sorted = [...ents].sort((a, b) => a.ts - b.ts);
   const cut = Math.floor(sorted.length * split);
-  const tr = evalConfig(sorted.slice(0, cut), series, cfg);
-  const te = evalConfig(sorted.slice(cut), series, cfg);
+  const train = sorted.slice(0, cut);
+  const test = sorted.slice(cut);
+  const { best, tried } = selectBest(train, series);
+  if (!best) {
+    console.log(`\n=== ${title} · 嵌套样本外 ===  (训练样本不足)`);
+    return;
+  }
+  const te = evalConfig(test, series, best.cfg);
   console.log(
-    `\n=== ${title} · 70/30 样本外（pen≥${pct(cfg.penMin)} SL${pct(cfg.sl)} TP${pct(cfg.tp)} H${cfg.H}h） ===\n` +
-      `  训练 n=${pad(tr.n, 3)} 净均 ${pct(tr.net).padStart(7)} 胜率 ${pct(tr.win).padStart(6)}  |  ` +
-      `测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)}`,
+    `\n=== ${title} · 嵌套样本外（前 ${Math.round(split * 100)}% 选参，后段未参与选择） ===\n` +
+      `  选定 pen≥${pct(best.cfg.penMin)} SL${pct(best.cfg.sl)} TP${pct(best.cfg.tp)} H${best.cfg.H}h（共试 ${tried} 组）\n` +
+      `  训练 n=${pad(best.stats.n, 3)} 净均 ${pct(best.stats.net).padStart(7)} t=${best.stats.t.toFixed(2)}\n` +
+      `  测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)} t=${te.t.toFixed(2)}`,
   );
 }
 
@@ -637,10 +664,10 @@ async function main() {
 
   console.log("\n################ 滚动样本外 / 时间切分（含资金费） ################");
   walkForward(wick, allCandles, "影线逆势 全部", 4);
-  holdout(wick, allCandles, "影线逆势 全部", { penMin: 0.002, sl: 0.004, tp: 0.006, H: 8 }, 0.7);
+  nestedHoldout(wick, allCandles, "影线逆势 全部");
   const btcWick = wick.filter((e) => e.symbol === "BTC");
   walkForward(btcWick, series, "影线逆势 BTC", 4);
-  holdout(btcWick, series, "影线逆势 BTC", { penMin: 0.002, sl: 0.004, tp: 0.006, H: 8 }, 0.7);
+  nestedHoldout(btcWick, series, "影线逆势 BTC");
 }
 
 main().catch((e) => {
