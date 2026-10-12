@@ -17,7 +17,7 @@ import {
   type Candle,
 } from "../convex/gate";
 import { contractOf } from "../convex/exchanges";
-import { fetchHistory } from "./history";
+import { fetchHistory, fetchFundingMean } from "./history";
 
 const INTERVAL = "15m";
 const SEC = 900;
@@ -37,6 +37,9 @@ const COST = COST_TAKER; // 默认基准（保持前几节口径一致）
 // 影线逆势专用：限价挂在关键位入场
 const WICKFADE_TARGET_COST = (MAKER_BPS + MAKER_BPS) / 10000; // 止盈限价成交
 const WICKFADE_STOP_COST = (MAKER_BPS + TAKER_BPS + SLIP_BPS) / 10000; // 止损市价成交
+
+// 各标的资金费均值（每 8h 结算），main 启动时填充。
+const FUNDING: Record<string, number> = {};
 
 type Occ = { name: string; startT: number; endT: number; high: number; low: number };
 
@@ -271,6 +274,9 @@ function simTrade(
 ): TradeResult {
   const entry = e.entryPrice;
   const short = e.isUp; // 影线上破→做空；影线下破→做多
+  const dir = short ? -1 : 1;
+  // 资金费：多头付、空头收（费率>0）；按持有上限 H 近似结算次数。
+  const funding = (FUNDING[e.symbol] ?? 0) * dir * (H / 8);
   const endT = e.entryTs + H * 3600;
   const i0 = idxAtOrAfter(candles, e.entryTs + SEC); // 从信号 K 线的下一根开始判定
   const stopPrice = short ? entry * (1 + sl) : entry * (1 - sl);
@@ -282,12 +288,12 @@ function simTrade(
     lastClose = cd.c;
     const hitStop = short ? cd.h >= stopPrice : cd.l <= stopPrice;
     const hitTgt = short ? cd.l <= tgtPrice : cd.h >= tgtPrice;
-    if (hitStop) return { r: -sl, net: -sl - stopCost, hit: "stop" };
-    if (hitTgt) return { r: tp, net: tp - targetCost, hit: "target" };
+    if (hitStop) return { r: -sl, net: -sl - stopCost - funding, hit: "stop" };
+    if (hitTgt) return { r: tp, net: tp - targetCost - funding, hit: "target" };
   }
   if (lastClose === null) return null;
   const raw = short ? (entry - lastClose) / entry : (lastClose - entry) / entry;
-  return { r: raw, net: raw - stopCost, hit: "timeout" };
+  return { r: raw, net: raw - stopCost - funding, hit: "timeout" };
 }
 
 function wickFadeGrid(
@@ -431,6 +437,102 @@ function filterByPenetration(
   return out;
 }
 
+/* ================= 滚动样本外 ================= */
+
+type Config = { penMin: number; sl: number; tp: number; H: number };
+type Stats = { n: number; net: number; win: number; sum: number };
+
+function evalConfig(ents: Event[], series: Record<string, Candle[]>, cfg: Config): Stats {
+  const f = cfg.penMin > 0 ? filterByPenetration(ents, series, null, cfg.penMin) : ents;
+  let n = 0;
+  let sum = 0;
+  let wins = 0;
+  for (const e of f) {
+    const t = simTrade(series[e.symbol], e, cfg.sl, cfg.tp, cfg.H);
+    if (!t) continue;
+    n++;
+    sum += t.net;
+    if (t.net > 0) wins++;
+  }
+  return { n, net: n ? sum / n : 0, win: n ? wins / n : 0, sum };
+}
+
+const PEN_GRID = [0, 0.0005, 0.001, 0.002, 0.003];
+const SL_GRID = [0.003, 0.004, 0.005];
+const TP_GRID = [0.004, 0.006, 0.008];
+const H_GRID = [4, 8];
+
+function walkForward(ents: Event[], series: Record<string, Candle[]>, title: string, K = 4) {
+  const sorted = [...ents].sort((a, b) => a.ts - b.ts);
+  if (sorted.length === 0) {
+    console.log(`\n=== ${title} · 滚动样本外 ===  (无样本)`);
+    return;
+  }
+  const tmin = sorted[0].ts;
+  const tmax = sorted[sorted.length - 1].ts;
+  const span = Math.max(1, tmax - tmin);
+  const blocks: Event[][] = Array.from({ length: K }, () => []);
+  for (const e of sorted) {
+    const idx = Math.min(K - 1, Math.floor(((e.ts - tmin) / span) * K));
+    blocks[idx].push(e);
+  }
+  console.log(`\n=== ${title} · 滚动样本外（扩窗 K=${K}） ===`);
+  const oos: { train: Stats; test: Stats }[] = [];
+  for (let k = 1; k < K; k++) {
+    const train = blocks.slice(0, k).flat();
+    const test = blocks[k];
+    let best: { cfg: Config; stats: Stats } | null = null;
+    for (const penMin of PEN_GRID) {
+      for (const sl of SL_GRID) {
+        for (const tp of TP_GRID) {
+          if (tp <= sl) continue;
+          for (const H of H_GRID) {
+            const cfg: Config = { penMin, sl, tp, H };
+            const st = evalConfig(train, series, cfg);
+            if (st.n < 15) continue;
+            if (!best || st.net > best.stats.net) best = { cfg, stats: st };
+          }
+        }
+      }
+    }
+    if (!best) {
+      console.log(`  fold ${k}: 训练样本不足（跳过）`);
+      continue;
+    }
+    const te = evalConfig(test, series, best.cfg);
+    oos.push({ train: best.stats, test: te });
+    console.log(
+      `  fold ${k}: 选参 pen≥${pct(best.cfg.penMin)} SL${pct(best.cfg.sl)} TP${pct(best.cfg.tp)} H${best.cfg.H}h` +
+        `  | 训练 n=${pad(best.stats.n, 3)} 净均 ${pct(best.stats.net).padStart(7)}` +
+        `  || 测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)}`,
+    );
+  }
+  let n = 0;
+  let sum = 0;
+  let wins = 0;
+  for (const o of oos) {
+    n += o.test.n;
+    sum += o.test.sum;
+    wins += o.test.win * o.test.n;
+  }
+  console.log(
+    `  —— 样本外汇总：n=${n}  净均 ${pct(n ? sum / n : 0)}  胜率 ${pct(n ? wins / n : 0)}  累计净 ${pct(sum)}`,
+  );
+}
+
+// 固定配置的 70/30 时间切分（选参无，仅看已知最优配置的样本外表现）。
+function holdout(ents: Event[], series: Record<string, Candle[]>, title: string, cfg: Config, split = 0.7) {
+  const sorted = [...ents].sort((a, b) => a.ts - b.ts);
+  const cut = Math.floor(sorted.length * split);
+  const tr = evalConfig(sorted.slice(0, cut), series, cfg);
+  const te = evalConfig(sorted.slice(cut), series, cfg);
+  console.log(
+    `\n=== ${title} · 70/30 样本外（pen≥${pct(cfg.penMin)} SL${pct(cfg.sl)} TP${pct(cfg.tp)} H${cfg.H}h） ===\n` +
+      `  训练 n=${pad(tr.n, 3)} 净均 ${pct(tr.net).padStart(7)} 胜率 ${pct(tr.win).padStart(6)}  |  ` +
+      `测试 n=${pad(te.n, 3)} 净均 ${pct(te.net).padStart(7)} 胜率 ${pct(te.win).padStart(6)}`,
+  );
+}
+
 async function main() {
   const series: Record<string, Candle[]> = {};
   const events: Event[] = [];
@@ -438,13 +540,17 @@ async function main() {
   for (const sym of SYMBOLS) {
     const candles = await fetchHistory(contractOf("gate", sym), INTERVAL, LOOKBACK_POINTS);
     series[sym] = candles;
+    FUNDING[sym] = await fetchFundingMean(contractOf("gate", sym));
     const occ = buildOccurrences(candles);
     const evs = simulate(sym, candles, occ);
     const from = candles.length ? new Date(candles[0].t * 1000).toISOString().slice(0, 10) : "-";
     const to = candles.length
       ? new Date(candles[candles.length - 1].t * 1000).toISOString().slice(0, 10)
       : "-";
-    console.log(`[${sym}] 15m ${candles.length} 根  ${from} ~ ${to}  信号 ${evs.length} 条`);
+    console.log(
+      `[${sym}] 15m ${candles.length} 根  ${from} ~ ${to}  信号 ${evs.length} 条  ` +
+        `资金费均值 ${(FUNDING[sym] * 100).toFixed(4)}%/8h`,
+    );
     events.push(...evs);
   }
 
@@ -523,6 +629,13 @@ async function main() {
       `刺破≥0.20% · ${sym}（限价进）`,
     );
   }
+
+  console.log("\n################ 滚动样本外 / 时间切分（含资金费） ################");
+  walkForward(wick, allCandles, "影线逆势 全部", 4);
+  holdout(wick, allCandles, "影线逆势 全部", { penMin: 0.002, sl: 0.004, tp: 0.006, H: 8 }, 0.7);
+  const btcWick = wick.filter((e) => e.symbol === "BTC");
+  walkForward(btcWick, series, "影线逆势 BTC", 4);
+  holdout(btcWick, series, "影线逆势 BTC", { penMin: 0.002, sl: 0.004, tp: 0.006, H: 8 }, 0.7);
 }
 
 main().catch((e) => {

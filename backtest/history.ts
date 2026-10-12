@@ -1,6 +1,10 @@
 // 历史 K 线抓取：Gate 期货 candlesticks 单次最多 2000 根，且只允许「最近 10000 点」。
 // 因此按块向前翻页，直到达到目标点数或触达历史边界。
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+
+const CACHE_DIR = "/tmp/opencode/bt-cache";
+
 export type Candle = {
   t: number;
   o: number;
@@ -39,8 +43,19 @@ async function fetchChunk(contract: string, interval: string, from: number, to: 
   const url =
     `${GATE}/futures/usdt/candlesticks` +
     `?contract=${contract}&interval=${interval}&from=${from}&to=${to}`;
-  const res = await fetch(url, { headers: HEADERS });
-  const raw: unknown = await res.json();
+  let raw: unknown;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(url, { headers: HEADERS });
+      raw = await res.json();
+      break;
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+  if (raw === undefined) throw new Error(`gate fetch failed: ${lastErr}`);
   if (!Array.isArray(raw)) {
     const msg = JSON.stringify(raw);
     if (msg.includes("too long ago")) throw new Error("TOO_OLD");
@@ -58,7 +73,7 @@ async function fetchChunk(contract: string, interval: string, from: number, to: 
   );
 }
 
-// 抓取截至现在的最近 maxPoints 根【已收盘】K 线（升序）。
+// 抓取截至现在的最近 maxPoints 根【已收盘】K 线（升序）。带磁盘缓存（24h）。
 export async function fetchHistory(
   contract: string,
   interval: string,
@@ -67,6 +82,15 @@ export async function fetchHistory(
 ): Promise<Candle[]> {
   const sec = SEC[interval];
   if (!sec) throw new Error(`unsupported interval: ${interval}`);
+  const cacheFile = `${CACHE_DIR}/${contract}-${interval}-${maxPoints}.json`;
+  try {
+    if (existsSync(cacheFile)) {
+      const cached = JSON.parse(readFileSync(cacheFile, "utf8")) as { at: number; data: Candle[] };
+      if (Date.now() - cached.at < 86400000 && cached.data.length) return cached.data;
+    }
+  } catch {
+    /* ignore cache errors */
+  }
   const now = Math.floor(Date.now() / 1000);
   let to = now;
   const out: Candle[] = [];
@@ -93,5 +117,28 @@ export async function fetchHistory(
   }
   out.sort((a, b) => a.t - b.t);
   const closed = out.filter((c) => c.t + sec <= now);
+  try {
+    mkdirSync(CACHE_DIR, { recursive: true });
+    writeFileSync(cacheFile, JSON.stringify({ at: Date.now(), data: closed }));
+  } catch {
+    /* ignore cache errors */
+  }
   return closed;
+}
+
+// 资金费均值（每结算周期的平均费率）。历史接口仅返回约最近 30 天。
+export async function fetchFundingMean(contract: string): Promise<number> {
+  const url = `${GATE}/futures/usdt/funding_rate?contract=${contract}&limit=1000`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(url, { headers: HEADERS });
+      const raw: unknown = await res.json();
+      if (!Array.isArray(raw) || raw.length === 0) return 0;
+      const sum = (raw as { r: string }[]).reduce((a, b) => a + Number(b.r), 0);
+      return sum / raw.length;
+    } catch {
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+  return 0;
 }
