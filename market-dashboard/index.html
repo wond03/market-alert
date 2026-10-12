@@ -103,6 +103,33 @@
   .params input[type="text"] { width: 160px; }
   .param-group { width: 100%; font-size: 12px; font-weight: 700; color: var(--text); margin: 10px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
   .param-box { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 0; }
+  /* 警报设置 */
+  .alert-sec { margin-top: 14px; }
+  .alert-sec-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  #alertBody label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .rule-form { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+  .rule-form input, .rule-form select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .rule-form input[type="number"] { width: 84px; }
+  .rule-form input[type="text"] { width: 120px; }
+  .rule-form input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
+  .rf-actions { width: 100%; display: flex; gap: 8px; margin-top: 4px; }
+  .rf-actions button, .rule-ops button { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  .rf-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #alertSecret { width: 150px; }
+  .rule-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .rule-row:last-child { border-bottom: 0; }
+  .rule-desc { font-size: 12px; }
+  .rule-desc b { color: var(--muted); font-weight: 600; }
+  .rule-ops { display: flex; gap: 6px; flex: none; }
+  .rule-ops button.on { color: #4caf50; border-color: #2e5a33; }
+  .rule-ops button.off { color: var(--muted); }
+  .alert-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+  .alert-item { font-size: 12px; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .alert-item:last-child { border-bottom: 0; }
+  .alert-item b { color: var(--text); font-weight: 600; }
+  .alert-msg { font-size: 12px; margin-left: 6px; }
+  .alert-msg.err { color: #ff6b6b; }
+  .alert-msg.ok { color: #4caf50; }
 </style>
 </head>
 <body class="notranslate">
@@ -114,6 +141,7 @@
     <div class="group" id="tfGroup"></div>
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
+    <button class="btn-settings" id="btnAlert">警报设置</button>
     <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
   </div>
 </header>
@@ -130,6 +158,50 @@
       </div>
     </div>
     <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="mask" id="alertMask">
+  <div class="modal">
+    <div class="modal-head">
+      <span>警报设置</span>
+      <div class="actions">
+        <button class="primary" id="alertClose">完成</button>
+      </div>
+    </div>
+    <div class="modal-body" id="alertBody">
+      <div class="alert-sec">
+        <label>写入口令 <input id="alertSecret" type="password" placeholder="RULES_SECRET"><span class="alert-msg" id="alertMsg"></span></label>
+      </div>
+      <div class="alert-sec">
+        <div class="alert-sec-title">新增 / 编辑规则</div>
+        <div class="rule-form">
+          <label>交易所 <select id="rfExchange"><option value="gate">Gate</option><option value="weex">WEEX</option><option value="okx">OKX</option></select></label>
+          <label>品种 <select id="rfSymbol"><option value="BTC">BTC/USDT</option><option value="XAU">XAU/USDT</option></select></label>
+          <label>类型 <select id="rfType"><option value="cross_up">价格上破</option><option value="cross_down">价格下破</option><option value="breakout">突破</option></select></label>
+          <label class="rf-price">价位 <input id="rfPrice" type="number" step="any" placeholder="如 80000"></label>
+          <label class="rf-break">指标 <select id="rfIndicator"><option value="prev_ohlc">前N根K线</option><option value="prev_session">前一时段</option></select></label>
+          <label class="rf-break rf-tf">周期 <select id="rfTf"><option value="15m">15分钟</option><option value="1h">1小时</option><option value="4h">4小时</option><option value="1d">日</option></select></label>
+          <label class="rf-break rf-tf">偏移 <input id="rfOffset" type="number" min="1" step="1" value="2"></label>
+          <label class="rf-break">取 <select id="rfField"><option value="high">前高</option><option value="low">前低</option></select></label>
+          <label class="rf-break">方向 <select id="rfDir"><option value="up">上破</option><option value="down">下破</option></select></label>
+          <label>备注 <input id="rfLabel" type="text" placeholder="自动"></label>
+          <label>启用 <input id="rfEnabled" type="checkbox" checked></label>
+          <div class="rf-actions">
+            <button class="primary" id="rfSave">添加规则</button>
+            <button id="rfCancel" style="display:none">取消编辑</button>
+          </div>
+        </div>
+      </div>
+      <div class="alert-sec">
+        <div class="alert-sec-title">现有规则</div>
+        <div id="ruleList"><div class="alert-empty">加载中…</div></div>
+      </div>
+      <div class="alert-sec">
+        <div class="alert-sec-title">最近触发</div>
+        <div id="alertList"><div class="alert-empty">加载中…</div></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1357,6 +1429,216 @@
     });
   }
 
+  /* ============ 警报设置（读写 Convex） ============ */
+  var CONVEX_URL = "https://efficient-cod-911.convex.cloud";
+  var ALERT_SECRET_KEY = "alertSecret";
+  var alertEditingId = null;
+
+  function convexError(res) {
+    if (res && res.errorData !== undefined && res.errorData !== null) {
+      if (typeof res.errorData === "string") return res.errorData;
+      try { return JSON.stringify(res.errorData); } catch (e) {}
+    }
+    var s = String((res && res.errorMessage) || "");
+    var m = s.match(/ConvexError:\s*([^\n]+)/) || s.match(/Uncaught Error:\s*([^\n]+)/);
+    if (m) return m[1].trim();
+    var lines = s.split("\n").map(function (t) { return t.trim(); }).filter(Boolean);
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].indexOf("Server Error") === -1 && lines[i].indexOf("Request ID") === -1 && lines[i].indexOf("at ") !== 0) return lines[i];
+    }
+    return lines[0] || "请求失败";
+  }
+  function convexPost(kind, path, args) {
+    return fetch(CONVEX_URL + "/api/" + kind, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path, args: args || {}, format: "json" })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || res.status !== "success") {
+        throw new Error(convexError(res));
+      }
+      return res.value;
+    });
+  }
+  function convexQuery(path, args) { return convexPost("query", path, args); }
+  function convexMutation(path, args) { return convexPost("mutation", path, args); }
+
+  function getSecret() { try { return localStorage.getItem(ALERT_SECRET_KEY) || ""; } catch (e) { return ""; } }
+  function setSecret(s) { try { localStorage.setItem(ALERT_SECRET_KEY, s); } catch (e) {} }
+
+  function exLabel(ex) { return ({ gate: "Gate", weex: "WEEX", okx: "OKX" })[ex] || "Gate"; }
+  function fmtNum(n) { return (typeof n === "number") ? n.toLocaleString("en-US", { maximumFractionDigits: 6 }) : "-"; }
+
+  function alertMsg(text, kind) {
+    var el = document.getElementById("alertMsg");
+    el.textContent = text || "";
+    el.className = "alert-msg" + (kind ? " " + kind : "");
+  }
+
+  function ruleSummary(r) {
+    if (r.type === "cross_up") return "价格上破 " + fmtNum(r.price);
+    if (r.type === "cross_down") return "价格下破 " + fmtNum(r.price);
+    if (r.type === "breakout") {
+      var f = r.field === "low" ? "低" : "高";
+      var dir = r.dir === "down" ? "下破" : "上破";
+      if ((r.indicator || "prev_ohlc") === "prev_session") return "前一时段" + f + dir;
+      return "前" + (r.offset || 2) + "根" + (r.tf || "1d") + f + dir;
+    }
+    return r.type;
+  }
+
+  function setDisplay(sel, on) {
+    Array.prototype.forEach.call(document.querySelectorAll("#alertBody " + sel), function (el) {
+      el.style.display = on ? "flex" : "none";
+    });
+  }
+  function applyTypeVisibility() {
+    var breakout = document.getElementById("rfType").value === "breakout";
+    var ind = document.getElementById("rfIndicator").value;
+    setDisplay(".rf-price", !breakout);
+    setDisplay(".rf-break", breakout);
+    setDisplay(".rf-tf", breakout && ind === "prev_ohlc");
+  }
+
+  function buildAlertForm(r) {
+    alertEditingId = r ? r._id : null;
+    document.getElementById("rfExchange").value = r ? (r.exchange || "gate") : "gate";
+    document.getElementById("rfSymbol").value = r ? r.symbol : "BTC";
+    document.getElementById("rfType").value = r ? r.type : "cross_up";
+    document.getElementById("rfPrice").value = (r && r.price != null) ? r.price : "";
+    document.getElementById("rfIndicator").value = (r && r.indicator) || "prev_ohlc";
+    document.getElementById("rfTf").value = (r && r.tf) || "1d";
+    document.getElementById("rfOffset").value = (r && r.offset) || 2;
+    document.getElementById("rfField").value = (r && r.field) || "high";
+    document.getElementById("rfDir").value = (r && r.dir) || "up";
+    document.getElementById("rfLabel").value = r ? (r.label || "") : "";
+    document.getElementById("rfEnabled").checked = r ? !!r.enabled : true;
+    document.getElementById("rfSave").textContent = alertEditingId ? "保存修改" : "添加规则";
+    document.getElementById("rfCancel").style.display = alertEditingId ? "block" : "none";
+    applyTypeVisibility();
+  }
+
+  function ruleToArgs() {
+    var secret = getSecret();
+    if (!secret) { alertMsg("请先填写写入口令", "err"); return null; }
+    var type = document.getElementById("rfType").value;
+    var symbol = document.getElementById("rfSymbol").value;
+    var rule = {
+      exchange: document.getElementById("rfExchange").value,
+      symbol: symbol,
+      label: document.getElementById("rfLabel").value.trim() || (symbol + "/USDT"),
+      type: type,
+      enabled: document.getElementById("rfEnabled").checked
+    };
+    if (type === "breakout") {
+      var ind = document.getElementById("rfIndicator").value;
+      rule.indicator = ind;
+      rule.field = document.getElementById("rfField").value;
+      rule.dir = document.getElementById("rfDir").value;
+      if (ind === "prev_ohlc") {
+        rule.tf = document.getElementById("rfTf").value;
+        rule.offset = parseInt(document.getElementById("rfOffset").value, 10) || 2;
+      }
+    } else {
+      var p = parseFloat(document.getElementById("rfPrice").value);
+      if (isNaN(p)) { alertMsg("请填写有效价位", "err"); return null; }
+      rule.price = p;
+    }
+    var args = { secret: secret, rule: rule };
+    if (alertEditingId) args.id = alertEditingId;
+    return args;
+  }
+
+  function saveAlertRule() {
+    var args = ruleToArgs();
+    if (!args) return;
+    convexMutation("rulesAdmin:upsertRule", args).then(function () {
+      alertMsg("已保存", "ok");
+      buildAlertForm(null);
+      refreshAlertData();
+    }).catch(function (e) { alertMsg(e.message, "err"); });
+  }
+
+  function deleteAlertRule(r) {
+    if (!window.confirm("删除规则：" + r.label + " " + ruleSummary(r) + " ？")) return;
+    convexMutation("rulesAdmin:deleteRule", { secret: getSecret(), id: r._id }).then(function () {
+      alertMsg("已删除", "ok"); refreshAlertData();
+    }).catch(function (e) { alertMsg(e.message, "err"); });
+  }
+
+  function toggleAlertRule(r) {
+    convexMutation("rulesAdmin:setEnabled", { secret: getSecret(), id: r._id, enabled: !r.enabled })
+      .then(function () { refreshAlertData(); })
+      .catch(function (e) { alertMsg(e.message, "err"); });
+  }
+
+  function renderRuleList(rules) {
+    var list = document.getElementById("ruleList");
+    list.innerHTML = "";
+    if (!rules || !rules.length) { list.innerHTML = '<div class="alert-empty">暂无规则</div>'; return; }
+    rules.forEach(function (r) {
+      var row = document.createElement("div"); row.className = "rule-row";
+      var d = document.createElement("div"); d.className = "rule-desc";
+      d.innerHTML = "[" + exLabel(r.exchange) + "] " + r.label + " · <b>" + ruleSummary(r) + "</b>";
+      row.appendChild(d);
+      var ops = document.createElement("div"); ops.className = "rule-ops";
+      var t = document.createElement("button");
+      t.textContent = r.enabled ? "启用中" : "已停用";
+      t.className = r.enabled ? "on" : "off";
+      t.addEventListener("click", function () { toggleAlertRule(r); });
+      ops.appendChild(t);
+      var ed = document.createElement("button"); ed.textContent = "编辑";
+      ed.addEventListener("click", function () { buildAlertForm(r); alertMsg("编辑中：" + r.label, ""); });
+      ops.appendChild(ed);
+      var del = document.createElement("button"); del.textContent = "删除";
+      del.addEventListener("click", function () { deleteAlertRule(r); });
+      ops.appendChild(del);
+      row.appendChild(ops);
+      list.appendChild(row);
+    });
+  }
+
+  function renderAlertList(alerts) {
+    var el = document.getElementById("alertList");
+    el.innerHTML = "";
+    if (!alerts || !alerts.length) { el.innerHTML = '<div class="alert-empty">暂无触发</div>'; return; }
+    alerts.forEach(function (a) {
+      var div = document.createElement("div"); div.className = "alert-item";
+      var t = new Date(a.ts * 1000);
+      var hh = ("0" + t.getHours()).slice(-2), mm = ("0" + t.getMinutes()).slice(-2);
+      div.innerHTML = "<b>" + hh + ":" + mm + "</b> " + String(a.text || "").replace(/\s+/g, " ");
+      el.appendChild(div);
+    });
+  }
+
+  function refreshAlertData() {
+    convexQuery("market:rules", {}).then(function (rules) { renderRuleList(rules); })
+      .catch(function () { document.getElementById("ruleList").innerHTML = '<div class="alert-empty">读取失败</div>'; });
+    convexQuery("market:recentAlerts", { limit: 20 }).then(function (alerts) { renderAlertList(alerts); })
+      .catch(function () {});
+  }
+
+  function openAlert() {
+    document.getElementById("alertSecret").value = getSecret();
+    document.getElementById("alertMask").classList.add("show");
+    alertMsg("");
+    buildAlertForm(null);
+    refreshAlertData();
+  }
+  function closeAlert() { document.getElementById("alertMask").classList.remove("show"); }
+
+  function wireAlertUI() {
+    document.getElementById("btnAlert").addEventListener("click", openAlert);
+    document.getElementById("alertClose").addEventListener("click", closeAlert);
+    document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
+    document.getElementById("alertSecret").addEventListener("change", function () { setSecret(this.value.trim()); });
+    document.getElementById("rfType").addEventListener("change", applyTypeVisibility);
+    document.getElementById("rfIndicator").addEventListener("change", applyTypeVisibility);
+    document.getElementById("rfSave").addEventListener("click", saveAlertRule);
+    document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
+  }
+
+  wireAlertUI();
   buildToolbar();
   buildTabs();
   buildPanels();
