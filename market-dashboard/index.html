@@ -647,7 +647,7 @@
     localization: BJ_LOCALIZATION,
     grid: { vertLines: { color: "rgba(42,49,60,0.6)" }, horzLines: { color: "rgba(42,49,60,0.6)" } },
     rightPriceScale: { borderColor: "#232a33" },
-    timeScale: { borderColor: "#232a33", timeVisible: true, secondsVisible: false, tickMarkFormatter: bjTick },
+    timeScale: { borderColor: "#232a33", timeVisible: true, secondsVisible: false, tickMarkFormatter: bjTick, rightOffset: 2 },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScale: { axisPressedMouseMove: true }
   };
   var BASE_SUB = {
@@ -1060,6 +1060,38 @@
     return out;
   }
 
+  /* 可见 K 线数量：切换周期/交易所、刷新页面时沿用用户的缩放，而不是每次都 fitContent 铺满 */
+  var VIEW_BARS_KEY = "market-dashboard:viewBars:v1";
+  var DEFAULT_VIEW_BARS = 120;
+  var viewBars = (function () {
+    try {
+      var v = parseInt(localStorage.getItem(VIEW_BARS_KEY), 10);
+      if (isFinite(v) && v >= 5) return v;
+    } catch (e) {}
+    return DEFAULT_VIEW_BARS;
+  })();
+  function saveViewBars() { try { localStorage.setItem(VIEW_BARS_KEY, String(viewBars)); } catch (e) {} }
+  function captureViewBars() {
+    var e = charts[state.activeInst];
+    if (!e) return;
+    try {
+      var r = e.mainChart.timeScale().getVisibleLogicalRange();
+      if (r && isFinite(r.from) && isFinite(r.to)) {
+        var b = Math.round(r.to - r.from);
+        if (b >= 5) { viewBars = b; saveViewBars(); }
+      }
+    } catch (err) {}
+  }
+  function applyView(entry) {
+    var len = entry.data ? entry.data.length : 0;
+    if (!len) return;
+    var bars = Math.max(5, Math.min(viewBars, len));
+    var to = len - 1 + 2; // 右侧留一点空隙
+    var from = to - bars;
+    if (from < 0) from = 0;
+    try { entry.mainChart.timeScale().setVisibleLogicalRange({ from: from, to: to }); } catch (e) {}
+  }
+
   function loadCandles(entry) {
     var ex = EXCHANGES[state.exchange];
     var contract = entry.inst.sym[state.exchange];
@@ -1071,7 +1103,7 @@
       entry.data = sortCandles(data);
       entry.candles.setData(entry.data);
       applyIndicatorData(entry);
-      try { entry.mainChart.timeScale().fitContent(); } catch (e) {}
+      applyView(entry);
       redrawOverlays(entry);
     });
   }
@@ -1175,6 +1207,7 @@
   /* ================= UI ================= */
   function switchExchange(id) {
     if (state.exchange === id || !EXCHANGES[id]) return;
+    captureViewBars();
     state.exchange = id;
     Array.prototype.forEach.call(document.getElementById("exGroup").children, function (b) {
       b.classList.toggle("active", b.dataset.ex === id);
@@ -1186,6 +1219,7 @@
 
   function selectInterval(key) {
     if (state.interval === key) return;
+    captureViewBars();
     var old = state.interval;
     state.interval = key;
     Array.prototype.forEach.call(document.getElementById("tfGroup").children, function (c) {
@@ -1651,6 +1685,8 @@
     document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
   }
 
+  window.addEventListener("beforeunload", captureViewBars);
+  window.__md = { get charts() { return charts; }, state: state, getViewBars: function () { return viewBars; } };
   wireAlertUI();
   buildToolbar();
   buildTabs();
