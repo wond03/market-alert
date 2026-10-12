@@ -110,6 +110,7 @@
   <h1>合约看盘 · BTC / XAU</h1>
   <div class="toolbar">
     <div class="group" id="tabs"></div>
+    <div class="group" id="exGroup"></div>
     <div class="group" id="tfGroup"></div>
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
@@ -117,7 +118,7 @@
   </div>
 </header>
 <main id="main"></main>
-<footer>数据来源：Gate.io 永续合约公开接口（自用）。行情仅供参考，不构成投资建议。</footer>
+<footer>数据来源：Gate / WEEX / OKX 永续合约公开接口（自用）。行情仅供参考，不构成投资建议。</footer>
 
 <div class="mask" id="mask">
   <div class="modal">
@@ -137,13 +138,11 @@
 (function () {
   "use strict";
 
-  var API = "https://api.gateio.ws/api/v4/futures/usdt";
-  var WS_URL = "wss://fx-ws.gateio.ws/v4/ws/usdt";
   var BARS = 400;
 
   var INSTRUMENTS = [
-    { key: "BTC_USDT", label: "BTC/USDT", sub: "永续" },
-    { key: "XAU_USDT", label: "XAU/USDT", sub: "永续" }
+    { label: "BTC/USDT", sub: "永续", sym: { gate: "BTC_USDT", weex: "BTCUSDT", okx: "BTC-USDT-SWAP" } },
+    { label: "XAU/USDT", sub: "永续", sym: { gate: "XAU_USDT", weex: "XAUUSDT", okx: "XAU-USDT-SWAP" } }
   ];
   var INTERVALS = [
     { key: "1m", label: "1分" }, { key: "5m", label: "5分" },
@@ -180,7 +179,134 @@
     { value: "dotted", label: "点线" }
   ];
 
-  var state = { interval: "15m", activeInst: 0 };
+  var state = { exchange: "gate", interval: "15m", activeInst: 0 };
+
+  /* ================= 交易所适配器 ================= */
+  /* 统一输出：candle = { time(秒), open, high, low, close, volume }
+               tick   = { contract, last, changePct, high24, low24, vol24(USDT), index }
+     新增交易所：在 EXCHANGES 加一条，并在 INSTRUMENTS[].sym 补上该所代码即可。 */
+  var EXCHANGE_ORDER = ["gate", "weex", "okx"];
+  var EXCHANGES = {
+    gate: {
+      label: "Gate", maxBars: 400,
+      interval: function (iv) { return iv; },
+      wsUrl: "wss://fx-ws.gateio.ws/v4/ws/usdt",
+      fetchCandles: function (contract, iv, limit) {
+        var url = "https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=" +
+          contract + "&interval=" + iv + "&limit=" + limit;
+        return fetch(url, { cache: "no-store" }).then(okJson).then(function (raw) {
+          return (raw || []).map(function (c) {
+            return { time: Math.floor(Number(c.t)), open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v };
+          }).filter(validCandle);
+        });
+      },
+      onOpen: function (send, contracts, iv) {
+        send({ time: nowSec(), channel: "futures.tickers", event: "subscribe", payload: contracts });
+        contracts.forEach(function (k) {
+          send({ time: nowSec(), channel: "futures.candlesticks", event: "subscribe", payload: [iv, k] });
+        });
+      },
+      onUnsubCandles: function (send, contracts, iv) {
+        contracts.forEach(function (k) {
+          send({ time: nowSec(), channel: "futures.candlesticks", event: "unsubscribe", payload: [iv, k] });
+        });
+      },
+      onMessage: function (msg, h) {
+        if (msg.event !== "update") return;
+        if (msg.channel === "futures.tickers") {
+          (msg.result || []).forEach(function (t) {
+            h.tick({ contract: t.contract, last: +t.last, changePct: +t.change_percentage,
+              high24: +t.high_24h, low24: +t.low_24h, vol24: +t.volume_24h_settle, index: +t.index_price });
+          });
+        } else if (msg.channel === "futures.candlesticks") {
+          (msg.result || []).forEach(function (c) {
+            var name = String(c.n || ""), us = name.indexOf("_");
+            if (us < 0) return;
+            if (name.slice(0, us) !== state.interval) return;
+            h.candle({ contract: name.slice(us + 1), time: Math.floor(Number(c.t)),
+              open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v });
+          });
+        }
+      }
+    },
+    weex: {
+      label: "WEEX", maxBars: 400,
+      interval: function (iv) { return iv; },
+      wsUrl: "wss://ws-contract.weex.com/v3/ws/public",
+      fetchCandles: function (contract, iv, limit) {
+        var url = "https://api-contract.weex.com/capi/v3/market/klines?symbol=" +
+          contract + "&interval=" + iv + "&limit=" + limit;
+        return fetch(url, { cache: "no-store" }).then(okJson).then(function (raw) {
+          return (raw || []).map(function (r) {
+            return { time: Math.floor(Number(r[0]) / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] };
+          }).filter(validCandle);
+        });
+      },
+      onOpen: function (send, contracts, iv) {
+        var params = [];
+        contracts.forEach(function (k) { params.push(k + "@ticker"); });
+        contracts.forEach(function (k) { params.push(k + "@kline_" + iv + "_LAST_PRICE"); });
+        send({ method: "SUBSCRIBE", params: params, id: 1 });
+      },
+      onUnsubCandles: function (send, contracts, iv) {
+        send({ method: "UNSUBSCRIBE", params: contracts.map(function (k) { return k + "@kline_" + iv + "_LAST_PRICE"; }), id: 2 });
+      },
+      onMessage: function (msg, h) {
+        if (msg.e === "ticker" && msg.d && msg.d[0]) {
+          var d = msg.d[0];
+          /* WEEX 的 P 是涨跌幅比例（0.0129=1.29%），需乘 100 */
+          h.tick({ contract: msg.s, last: +d.c, changePct: +d.P * 100, high24: +d.h, low24: +d.l, vol24: +d.q, index: +d.i });
+        } else if ((msg.e === "kline" || msg.e === "klineSnapshot") && msg.d) {
+          var want = EXCHANGES.weex.interval(state.interval);
+          msg.d.forEach(function (c) {
+            if (String(c.i) !== want) return;
+            h.candle({ contract: msg.s, time: Math.floor(Number(c.t)), open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v });
+          });
+        }
+      }
+    },
+    okx: {
+      label: "OKX", maxBars: 300, ping: true,
+      interval: function (iv) { return ({ "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D" })[iv] || iv; },
+      wsUrl: "wss://ws.okx.com:8443/ws/v5/public",
+      fetchCandles: function (contract, iv, limit) {
+        var url = "https://www.okx.com/api/v5/market/candles?instId=" +
+          encodeURIComponent(contract) + "&bar=" + iv + "&limit=" + limit;
+        return fetch(url, { cache: "no-store" }).then(okJson).then(function (res) {
+          if (!res || res.code !== "0" || !res.data) return [];
+          return res.data.map(function (r) {
+            return { time: Math.floor(Number(r[0]) / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] };
+          }).reverse().filter(validCandle);
+        });
+      },
+      onOpen: function (send, contracts, iv) {
+        var args = [];
+        contracts.forEach(function (k) { args.push({ channel: "tickers", instId: k }); });
+        contracts.forEach(function (k) { args.push({ channel: "candle" + iv, instId: k }); });
+        send({ op: "subscribe", args: args });
+      },
+      onUnsubCandles: function (send, contracts, iv) {
+        send({ op: "unsubscribe", args: contracts.map(function (k) { return { channel: "candle" + iv, instId: k }; }) });
+      },
+      onMessage: function (msg, h) {
+        if (!msg || !msg.arg) return;
+        var inst = msg.arg.instId, data = msg.data || [];
+        if (msg.arg.channel === "tickers") {
+          data.forEach(function (t) {
+            var last = +t.last, open = +t.open24h;
+            var chg = open ? (last - open) / open * 100 : NaN;
+            h.tick({ contract: inst, last: last, changePct: chg, high24: +t.high24h, low24: +t.low24h,
+              vol24: +t.volCcy24h * last, index: NaN });
+          });
+        } else if (String(msg.arg.channel).indexOf("candle") === 0) {
+          if (msg.arg.channel !== "candle" + EXCHANGES.okx.interval(state.interval)) return;
+          data.forEach(function (r) {
+            h.candle({ contract: inst, time: Math.floor(Number(r[0]) / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] });
+          });
+        }
+      }
+    }
+  };
 
   /* ================= indicator registry ================= */
   /* 新增指标：在这里加一条即可。calc(data, params) 返回与 series 一一对应的数据数组 */
@@ -844,96 +970,94 @@
   }
   function priceDp(p) { if (p >= 1000) return 1; if (p >= 1) return 2; return 5; }
 
-  function toCandles(raw) {
-    return (raw || []).map(function (c) {
-      return { time: Number(c.t), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c), volume: Number(c.v) };
-    }).filter(function (c) { return isFinite(c.time) && isFinite(c.close); });
+  function validCandle(c) {
+    return c && isFinite(c.time) && isFinite(c.close) && c.time > 0;
+  }
+  function okJson(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }
+  /* 统一按时间升序并去重（各交易所返回顺序不一致，如 WEEX 会乱序） */
+  function sortCandles(arr) {
+    var list = (arr || []).filter(validCandle).sort(function (a, b) { return a.time - b.time; });
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      if (out.length && out[out.length - 1].time === list[i].time) out[out.length - 1] = list[i];
+      else out.push(list[i]);
+    }
+    return out;
   }
 
   function loadCandles(entry) {
-    var url = API + "/candlesticks?contract=" + entry.inst.key + "&interval=" + state.interval + "&limit=" + BARS;
-    return fetch(url, { cache: "no-store" }).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
-    }).then(function (raw) {
-      var data = toCandles(raw);
-      entry.data = data;
-      entry.candles.setData(data);
+    var ex = EXCHANGES[state.exchange];
+    var contract = entry.inst.sym[state.exchange];
+    var iv = ex.interval(state.interval);
+    var limit = Math.min(BARS, ex.maxBars || BARS);
+    var gen = state.exchange + "|" + state.interval;
+    return ex.fetchCandles(contract, iv, limit).then(function (data) {
+      if (gen !== state.exchange + "|" + state.interval) return; // 已切换交易所/周期，丢弃过期响应
+      entry.data = sortCandles(data);
+      entry.candles.setData(entry.data);
       applyIndicatorData(entry);
       try { entry.mainChart.timeScale().fitContent(); } catch (e) {}
       redrawOverlays(entry);
     });
   }
-  /* ================= 实时数据（Gate.io WebSocket） ================= */
-  var ws = null, wsReady = false, wsRetry = 0, wsReconnectTimer = null;
+
+  /* ================= 实时数据（各交易所 WebSocket） ================= */
+  var ws = null, wsReady = false, wsRetry = 0, wsReconnectTimer = null, wsConnExchange = null, wsPingTimer = null;
 
   function nowSec() { return Math.floor(Date.now() / 1000); }
-  function findEntry(key) {
-    for (var i = 0; i < charts.length; i++) { if (charts[i].inst.key === key) return charts[i]; }
+  function curEx() { return EXCHANGES[state.exchange]; }
+  function contracts() { return INSTRUMENTS.map(function (i) { return i.sym[state.exchange]; }); }
+  function findEntry(contract) {
+    var want = String(contract || "").toLowerCase();
+    for (var i = 0; i < charts.length; i++) {
+      if (String(charts[i].inst.sym[state.exchange] || "").toLowerCase() === want) return charts[i];
+    }
     return null;
   }
-  function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-
-  function contracts() { return INSTRUMENTS.map(function (i) { return i.key; }); }
-  function subscribeTickers() {
-    wsSend({ time: nowSec(), channel: "futures.tickers", event: "subscribe", payload: contracts() });
-  }
-  function subscribeCandles() {
-    contracts().forEach(function (k) {
-      wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "subscribe", payload: [state.interval, k] });
-    });
-  }
-  function unsubscribeCandles(interval) {
-    contracts().forEach(function (k) {
-      wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "unsubscribe", payload: [interval, k] });
-    });
-  }
+  function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(typeof obj === "string" ? obj : JSON.stringify(obj)); }
 
   function applyTicker(t) {
     var entry = findEntry(t.contract);
-    if (!entry) return;
-    var last = Number(t.last);
-    if (!isFinite(last)) return;
-    var dp = priceDp(last), chg = Number(t.change_percentage);
-    var els = entry.panel;
-    els.querySelector('[data-role="price"]').textContent = fmt(last, dp);
-    var chgEl = els.querySelector('[data-role="chg"]');
-    chgEl.textContent = (chg >= 0 ? "+" : "") + fmt(chg, 2) + "%";
-    chgEl.className = "chg " + (chg >= 0 ? "up" : "down");
-    els.querySelector('[data-role="high"]').textContent = fmt(Number(t.high_24h), dp);
-    els.querySelector('[data-role="low"]').textContent = fmt(Number(t.low_24h), dp);
-    els.querySelector('[data-role="vol"]').textContent = fmt(Number(t.volume_24h_settle) / 1e6, 1) + "M";
-    els.querySelector('[data-role="idx"]').textContent = fmt(Number(t.index_price), dp);
+    if (!entry || !isFinite(t.last)) return;
+    var dp = priceDp(t.last), els = entry.panel;
+    els.querySelector('[data-role="price"]').textContent = fmt(t.last, dp);
+    var chg = Number(t.changePct);
+    if (isFinite(chg)) {
+      var chgEl = els.querySelector('[data-role="chg"]');
+      chgEl.textContent = (chg >= 0 ? "+" : "") + fmt(chg, 2) + "%";
+      chgEl.className = "chg " + (chg >= 0 ? "up" : "down");
+    }
+    els.querySelector('[data-role="high"]').textContent = isFinite(t.high24) ? fmt(t.high24, dp) : "--";
+    els.querySelector('[data-role="low"]').textContent = isFinite(t.low24) ? fmt(t.low24, dp) : "--";
+    els.querySelector('[data-role="vol"]').textContent = isFinite(t.vol24) ? fmt(t.vol24 / 1e6, 1) + "M" : "--";
+    els.querySelector('[data-role="idx"]').textContent = isFinite(t.index) ? fmt(t.index, dp) : "--";
   }
 
   function applyCandle(c) {
-    var name = String(c.n || ""), us = name.indexOf("_");
-    if (us < 0) return;
-    var iv = name.slice(0, us), contract = name.slice(us + 1);
-    if (iv !== state.interval) return; // 屏蔽切换周期前遗留的旧订阅
-    var entry = findEntry(contract);
+    var entry = findEntry(c.contract);
     if (!entry) return;
     var candle = {
-      time: Number(c.t), open: Number(c.o), high: Number(c.h),
-      low: Number(c.l), close: Number(c.c), volume: Number(c.v)
+      time: Number(c.time), open: Number(c.open), high: Number(c.high),
+      low: Number(c.low), close: Number(c.close), volume: Number(c.volume)
     };
     if (!isFinite(candle.time) || !isFinite(candle.close)) return;
+    var arr = entry.data;
+    // lightweight-charts 的 series.update 只接受「最后一根」或更新的蜡烛，
+    // 早于最后一根的历史/乱序数据一律丢弃，避免抛 "Cannot update oldest data"。
+    if (arr.length && candle.time < arr[arr.length - 1].time) return;
+    if (arr.length && candle.time === arr[arr.length - 1].time) arr[arr.length - 1] = candle;
+    else arr.push(candle);
     entry.candles.update(candle);
-    var arr = entry.data.slice(), idx = -1;
-    for (var i = arr.length - 1; i >= 0; i--) { if (arr[i].time === candle.time) { idx = i; break; } }
-    if (idx >= 0) arr[idx] = candle;
-    else if (!arr.length || candle.time > arr[arr.length - 1].time) arr.push(candle);
-    else return; // 早于窗口的历史蜡烛，忽略
-    entry.data = arr;
     applyIndicatorData(entry);
     redrawOverlays(entry);
   }
 
   function onWsMessage(raw) {
+    if (typeof raw === "string" && raw === "pong") return;
+    if (wsConnExchange !== state.exchange) return; // 忽略切换交易所后旧连接的残留消息
     var msg;
     try { msg = JSON.parse(raw); } catch (e) { return; }
-    if (msg.event !== "update") return;
-    if (msg.channel === "futures.tickers") { (msg.result || []).forEach(applyTicker); }
-    else if (msg.channel === "futures.candlesticks") { (msg.result || []).forEach(applyCandle); }
+    curEx().onMessage(msg, { tick: applyTicker, candle: applyCandle });
   }
 
   function setStatus(ok) {
@@ -942,12 +1066,24 @@
     txt.textContent = ok ? "实时 · " + new Date().toLocaleTimeString("zh-CN") : "连接中断，重连中…";
   }
 
+  function closeWs() {
+    if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
+    if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; }
+    wsReady = false;
+  }
+
   function wsConnect() {
     if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-    try { ws = new WebSocket(WS_URL); } catch (e) { scheduleReconnect(); return; }
-    ws.onopen = function () { wsReady = true; wsRetry = 0; setStatus(true); subscribeTickers(); subscribeCandles(); };
+    var ex = curEx();
+    wsConnExchange = state.exchange;
+    try { ws = new WebSocket(ex.wsUrl); } catch (e) { scheduleReconnect(); return; }
+    ws.onopen = function () {
+      wsReady = true; wsRetry = 0; setStatus(true);
+      ex.onOpen(wsSend, contracts(), ex.interval(state.interval));
+      if (ex.ping) wsPingTimer = setInterval(function () { try { ws.send("ping"); } catch (e) {} }, 20000);
+    };
     ws.onmessage = function (e) { onWsMessage(e.data); };
-    ws.onclose = function () { wsReady = false; setStatus(false); scheduleReconnect(); };
+    ws.onclose = function () { wsReady = false; setStatus(false); if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; } scheduleReconnect(); };
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
@@ -959,10 +1095,20 @@
 
   function reloadAll() {
     charts.forEach(function (e) { loadCandles(e).catch(function () {}); });
-    if (wsReady) subscribeCandles();
   }
 
   /* ================= UI ================= */
+  function switchExchange(id) {
+    if (state.exchange === id || !EXCHANGES[id]) return;
+    state.exchange = id;
+    Array.prototype.forEach.call(document.getElementById("exGroup").children, function (b) {
+      b.classList.toggle("active", b.dataset.ex === id);
+    });
+    closeWs();
+    reloadAll();
+    wsConnect();
+  }
+
   function selectInterval(key) {
     if (state.interval === key) return;
     var old = state.interval;
@@ -971,11 +1117,24 @@
       c.classList.toggle("active", c.dataset.key === key);
     });
     document.getElementById("tfSelect").value = key;
-    if (wsReady) unsubscribeCandles(old);
+    if (wsReady) {
+      var ex = curEx();
+      ex.onUnsubCandles(wsSend, contracts(), ex.interval(old));
+      ex.onOpen(wsSend, contracts(), ex.interval(key));
+    }
     reloadAll();
   }
 
   function buildToolbar() {
+    var exGroup = document.getElementById("exGroup");
+    EXCHANGE_ORDER.forEach(function (id) {
+      var b = document.createElement("button");
+      b.textContent = EXCHANGES[id].label; b.dataset.ex = id;
+      if (id === state.exchange) b.classList.add("active");
+      b.addEventListener("click", function () { switchExchange(id); });
+      exGroup.appendChild(b);
+    });
+
     var tf = document.getElementById("tfGroup");
     var sel = document.getElementById("tfSelect");
     INTERVALS.forEach(function (iv) {
