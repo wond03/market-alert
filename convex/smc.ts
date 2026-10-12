@@ -184,6 +184,7 @@ type SignalInsert = {
   exchange: string;
   symbol: string;
   sigTs: number;
+  session: string;
   level: number;
   levelKind: string;
   sweepSide: string;
@@ -276,6 +277,9 @@ export const scan = internalAction({
       for (const bar of newBars) {
         const j = c15.findIndex((c) => c.t === bar.t);
         if (j < FRACTAL + 2) continue;
+        // 日内：仅记录三大交易时段（亚洲盘/伦敦盘/纽约盘）内收盘的信号。
+        const session = gate.currentSessionName(bar.t + TF);
+        if (!session) continue;
         // 该 bar 时刻「已确认」的摆动点（右侧 N 根已出现）
         const hi = swings15.highs.filter((s) => s.idx <= j - FRACTAL);
         const lo = swings15.lows.filter((s) => s.idx <= j - FRACTAL);
@@ -318,6 +322,7 @@ export const scan = internalAction({
               exchange: EXCHANGE,
               symbol,
               sigTs: bar.t,
+              session,
               level: L.price,
               levelKind: L.kind,
               sweepSide: up ? "up" : "down",
@@ -399,6 +404,7 @@ const signalValidator = v.object({
   exchange: v.string(),
   symbol: v.string(),
   sigTs: v.number(),
+  session: v.string(),
   level: v.number(),
   levelKind: v.string(),
   sweepSide: v.string(),
@@ -495,6 +501,11 @@ export const smcSummary = query({
       },
       byAlign1h: { aligned: group((s) => s.align1h), opposing: group((s) => !s.align1h) },
       byZone: { premium: group((s) => s.zone === "premium"), discount: group((s) => s.zone === "discount") },
+      bySession: {
+        亚洲盘: group((s) => s.session === "亚洲盘"),
+        伦敦盘: group((s) => s.session === "伦敦盘"),
+        纽约盘: group((s) => s.session === "纽约盘"),
+      },
     };
   },
 });

@@ -63,6 +63,7 @@ export default defineSchema({
     exchange: v.string(),
     symbol: v.string(),
     sigTs: v.number(),
+    session: v.string(), // 亚洲盘 | 伦敦盘 | 纽约盘（仅记录三大时段内的信号）
     level: v.number(), // 被扫荡的参考位
     levelKind: v.string(), // session_high | session_low | swing_high | swing_low
     sweepSide: v.string(), // up | down（哪一侧被扫）
