@@ -1465,6 +1465,12 @@
 
   function getSecret() { try { return localStorage.getItem(ALERT_SECRET_KEY) || ""; } catch (e) { return ""; } }
   function setSecret(s) { try { localStorage.setItem(ALERT_SECRET_KEY, s); } catch (e) {} }
+  function currentSecret() {
+    var el = document.getElementById("alertSecret");
+    var s = el ? (el.value || "").trim() : getSecret();
+    setSecret(s);
+    return s;
+  }
 
   function exLabel(ex) { return ({ gate: "Gate", weex: "WEEX", okx: "OKX" })[ex] || "Gate"; }
   function fmtNum(n) { return (typeof n === "number") ? n.toLocaleString("en-US", { maximumFractionDigits: 6 }) : "-"; }
@@ -1519,7 +1525,7 @@
   }
 
   function ruleToArgs() {
-    var secret = getSecret();
+    var secret = currentSecret();
     if (!secret) { alertMsg("请先填写写入口令", "err"); return null; }
     var type = document.getElementById("rfType").value;
     var symbol = document.getElementById("rfSymbol").value;
@@ -1561,13 +1567,13 @@
 
   function deleteAlertRule(r) {
     if (!window.confirm("删除规则：" + r.label + " " + ruleSummary(r) + " ？")) return;
-    convexMutation("rulesAdmin:deleteRule", { secret: getSecret(), id: r._id }).then(function () {
+    convexMutation("rulesAdmin:deleteRule", { secret: currentSecret(), id: r._id }).then(function () {
       alertMsg("已删除", "ok"); refreshAlertData();
     }).catch(function (e) { alertMsg(e.message, "err"); });
   }
 
   function toggleAlertRule(r) {
-    convexMutation("rulesAdmin:setEnabled", { secret: getSecret(), id: r._id, enabled: !r.enabled })
+    convexMutation("rulesAdmin:setEnabled", { secret: currentSecret(), id: r._id, enabled: !r.enabled })
       .then(function () { refreshAlertData(); })
       .catch(function (e) { alertMsg(e.message, "err"); });
   }
@@ -1635,7 +1641,7 @@
     document.getElementById("btnAlert").addEventListener("click", openAlert);
     document.getElementById("alertClose").addEventListener("click", closeAlert);
     document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
-    document.getElementById("alertSecret").addEventListener("change", function () { setSecret(this.value.trim()); });
+    document.getElementById("alertSecret").addEventListener("input", function () { setSecret(this.value.trim()); });
     document.getElementById("rfType").addEventListener("change", applyTypeVisibility);
     document.getElementById("rfIndicator").addEventListener("change", applyTypeVisibility);
     document.getElementById("rfSave").addEventListener("click", saveAlertRule);
