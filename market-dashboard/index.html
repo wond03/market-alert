@@ -189,7 +189,6 @@
           <label>品种 <select id="rfSymbol"><option value="BTC">BTC/USDT</option><option value="XAU">XAU/USDT</option></select></label>
           <label>类型 <select id="rfType"><option value="cross_up">价格上破</option><option value="cross_down">价格下破</option><option value="breakout">突破</option></select></label>
           <label class="rf-price">价位 <input id="rfPrice" type="number" step="any" placeholder="如 80000"></label>
-          <label class="rf-break">指标 <select id="rfIndicator"><option value="prev_ohlc">前N根K线</option><option value="prev_session">前一时段</option></select></label>
           <label class="rf-break rf-tf">周期 <select id="rfTf"><option value="15m">15分钟</option><option value="1h">1小时</option><option value="4h">4小时</option><option value="1d">日</option></select></label>
           <label class="rf-break rf-tf">偏移 <input id="rfOffset" type="number" min="1" step="1" value="2"></label>
           <label class="rf-break">取 <select id="rfField"><option value="high">前高</option><option value="low">前低</option></select></label>
@@ -201,7 +200,7 @@
             <button id="rfCancel" style="display:none">取消编辑</button>
           </div>
         </div>
-        <div class="alert-hint">「突破」类规则统一按 <b>15 分钟 K 线</b> 判定：收盘站上/跌破关键位为「实体突破」，仅有最高/最低触及而未收盘突破为「影线突破」，两种都会推送并在文案里标注。<br>「前一时段」按 <b>亚洲盘 → 伦敦盘 → 纽约盘</b> 循环，取当前时段的上一段（亚洲盘取前一个纽约盘、伦敦盘取亚洲盘、纽约盘取伦敦盘）。上面的「周期/偏移」只用于计算「前N根K线」的关键位。</div>
+        <div class="alert-hint">「突破」类规则统一按 <b>15 分钟 K 线</b> 判定：收盘站上/跌破关键位为「实体突破」，仅有最高/最低触及而未收盘突破为「影线突破」，两种都会推送并在文案里标注。下面的「周期/偏移 / 取 / 方向」用于计算「前N根K线」的关键位。</div>
       </div>
       <div class="alert-sec">
         <div class="alert-sec-title">现有规则</div>
@@ -1777,7 +1776,6 @@
     if (r.type === "breakout") {
       var f = r.field === "low" ? "低" : "高";
       var dir = r.dir === "down" ? "下破" : "上破";
-      if ((r.indicator || "prev_ohlc") === "prev_session") return "前一时段" + f + dir;
       return "前" + (r.offset || 2) + "根" + (r.tf || "1d") + f + dir;
     }
     return r.type;
@@ -1790,10 +1788,9 @@
   }
   function applyTypeVisibility() {
     var breakout = document.getElementById("rfType").value === "breakout";
-    var ind = document.getElementById("rfIndicator").value;
     setDisplay(".rf-price", !breakout);
     setDisplay(".rf-break", breakout);
-    setDisplay(".rf-tf", breakout && ind === "prev_ohlc");
+    setDisplay(".rf-tf", breakout);
   }
 
   function buildAlertForm(r) {
@@ -1802,7 +1799,6 @@
     document.getElementById("rfSymbol").value = r ? r.symbol : "BTC";
     document.getElementById("rfType").value = r ? r.type : "cross_up";
     document.getElementById("rfPrice").value = (r && r.price != null) ? r.price : "";
-    document.getElementById("rfIndicator").value = (r && r.indicator) || "prev_ohlc";
     document.getElementById("rfTf").value = (r && r.tf) || "1d";
     document.getElementById("rfOffset").value = (r && r.offset) || 2;
     document.getElementById("rfField").value = (r && r.field) || "high";
@@ -1827,14 +1823,11 @@
       enabled: document.getElementById("rfEnabled").checked
     };
     if (type === "breakout") {
-      var ind = document.getElementById("rfIndicator").value;
-      rule.indicator = ind;
+      rule.indicator = "prev_ohlc";
       rule.field = document.getElementById("rfField").value;
       rule.dir = document.getElementById("rfDir").value;
-      if (ind === "prev_ohlc") {
-        rule.tf = document.getElementById("rfTf").value;
-        rule.offset = parseInt(document.getElementById("rfOffset").value, 10) || 2;
-      }
+      rule.tf = document.getElementById("rfTf").value;
+      rule.offset = parseInt(document.getElementById("rfOffset").value, 10) || 2;
     } else {
       var p = parseFloat(document.getElementById("rfPrice").value);
       if (isNaN(p)) { alertMsg("请填写有效价位", "err"); return null; }
@@ -1933,7 +1926,6 @@
     document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
     document.getElementById("alertSecret").addEventListener("input", function () { setSecret(this.value.trim()); });
     document.getElementById("rfType").addEventListener("change", applyTypeVisibility);
-    document.getElementById("rfIndicator").addEventListener("change", applyTypeVisibility);
     document.getElementById("rfSave").addEventListener("click", saveAlertRule);
     document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
   }

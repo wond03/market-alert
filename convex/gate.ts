@@ -49,8 +49,6 @@ export const SESSIONS: Session[] = [
   { name: "伦敦盘", tz: "Europe/London", start: 8 * 60, end: 16 * 60 + 30 },
   { name: "纽约盘", tz: "America/New_York", start: 9 * 60 + 30, end: 16 * 60 },
 ];
-export const SESSION_INTERVAL = "5m";
-export const SESSION_CANDLE_LIMIT = 700; // 约 2.4 天，足够覆盖最近一个已结束时段
 
 // 时段循环顺序：亚洲盘 → 伦敦盘 → 纽约盘 →（次日）亚洲盘
 export const SESSION_CYCLE = ["亚洲盘", "伦敦盘", "纽约盘"];
@@ -186,130 +184,14 @@ export function currentSessionName(now: number): string | null {
 }
 
 // 找出「最近一个已结束的交易时段」的高/低（跳过仍在进行中的那个）。
-export function latestCompletedSession(
-  candles: Candle[],
-): { name: string; high: number; low: number; endT: number } | null {
-  if (candles.length === 0) return null;
-  const lastIdx = candles.length - 1;
-  const cache = new Map<string, number[]>();
-  const minsFor = (tz: string): number[] => {
-    let arr = cache.get(tz);
-    if (!arr) {
-      arr = candles.map((c) => tzMinutes(c.t, tz));
-      cache.set(tz, arr);
-    }
-    return arr;
-  };
-  let best: { name: string; high: number; low: number; endT: number } | null = null;
-  for (const s of SESSIONS) {
-    const arr = minsFor(s.tz);
-    let i = 0;
-    while (i < candles.length) {
-      if (!inWindow(arr[i], s.start, s.end)) { i++; continue; }
-      let high = -Infinity, low = Infinity;
-      while (i < candles.length && inWindow(arr[i], s.start, s.end)) {
-        high = Math.max(high, candles[i].h);
-        low = Math.min(low, candles[i].l);
-        i++;
-      }
-      const i1 = i - 1;
-      if (i1 >= lastIdx) continue; // 该时段仍在进行中
-      const endT = candles[i1].t;
-      if (!best || endT > best.endT) best = { name: s.name, high, low, endT };
-    }
-  }
-  return best;
-}
-
-type SessionRange = { name: string; high: number; low: number; endT: number; open: boolean };
-
-// candles 中「最近一段」指定时段的区间（该段可能仍在进行中，open=true）。
-function latestSessionRange(
-  candles: Candle[],
-  s: Session,
-  now: number,
-): SessionRange | null {
-  if (candles.length === 0) return null;
-  const lastIdx = candles.length - 1;
-  const mins = candles.map((c) => tzMinutes(c.t, s.tz));
-  let range: SessionRange | null = null;
-  let i = 0;
-  while (i < candles.length) {
-    if (!inWindow(mins[i], s.start, s.end)) { i++; continue; }
-    let high = -Infinity, low = Infinity, j = i;
-    while (j < candles.length && inWindow(mins[j], s.start, s.end)) {
-      high = Math.max(high, candles[j].h);
-      low = Math.min(low, candles[j].l);
-      j++;
-    }
-    const endIdx = j - 1;
-    const open = endIdx >= lastIdx && inWindow(tzMinutes(now, s.tz), s.start, s.end);
-    range = { name: s.name, high, low, endT: candles[endIdx].t, open };
-    i = j;
-  }
-  return range;
-}
-
-async function prevSessionLevel(
-  exchange: Exchange,
-  symbol: string,
-  field: string,
-  cache: Map<string, Candle[]>,
-): Promise<{ level: number; name: string }> {
-  if (field !== "high" && field !== "low") {
-    throw new Error("prev_session 仅支持 field=high/low");
-  }
-  const cacheKey = `${exchange}:${symbol}:${SESSION_INTERVAL}`;
-  let candles = cache.get(cacheKey);
-  if (!candles) {
-    candles = await getCandles(
-      exchange,
-      contractOf(exchange, symbol),
-      SESSION_INTERVAL,
-      SESSION_CANDLE_LIMIT,
-    );
-    cache.set(cacheKey, candles);
-  }
-  const now = Math.floor(Date.now() / 1000);
-  // 参考时段：处于某时段时取其「前一段」（亚洲盘→纽约盘、伦敦盘→亚洲盘、纽约盘→伦敦盘）；
-  // 时段间隙时取「最近一个已结束的时段」。
-  let targetName: string;
-  const cur = currentSessionName(now);
-  if (cur) {
-    targetName = SESSION_PREV[cur] ?? cur;
-  } else {
-    const sess = latestCompletedSession(candles);
-    if (!sess) throw new Error("尚无可用的交易时段参考");
-    targetName = sess.name;
-  }
-  const s = SESSIONS.find((x) => x.name === targetName);
-  if (!s) throw new Error(`未知时段: ${targetName}`);
-  const r = latestSessionRange(candles, s, now);
-  if (!r) throw new Error(`暂无「${targetName}」区间数据`);
-  return { level: field === "low" ? r.low : r.high, name: r.name };
-}
-
 // 返回 (level, isUp, desc)。isUp=true 表示关注向上穿越。
 export async function resolveLevel(
   rule: RuleDoc,
   cache: Map<string, Candle[]>,
 ): Promise<{ level: number; isUp: boolean; desc?: string }> {
   if (rule.type === "breakout") {
-    const indicator = rule.indicator ?? "prev_ohlc";
     const field = rule.field ?? "high";
     const isUp = (rule.dir ?? "up") === "up";
-    if (indicator === "prev_session") {
-      const { level, name } = await prevSessionLevel(
-        rule.exchange,
-        rule.symbol,
-        field,
-        cache,
-      );
-      return { level, isUp, desc: `前时段(${name})${FIELD_NAME[field] ?? field}` };
-    }
-    if (indicator !== "prev_ohlc") {
-      throw new Error(`unsupported indicator: ${indicator}`);
-    }
     const level = await prevOhlcLevel(
       rule.exchange,
       rule.symbol,
@@ -417,9 +299,6 @@ export function periodName(tf: string, offset: number): string {
 export function ruleDesc(rule: RuleDoc): string {
   if (rule.type === "breakout") {
     const field = rule.field ?? "high";
-    if ((rule.indicator ?? "prev_ohlc") === "prev_session") {
-      return `前时段${FIELD_NAME[field] ?? field}`;
-    }
     const tf = rule.tf ?? "1d";
     return `${periodName(tf, rule.offset ?? 2)}${FIELD_NAME[field] ?? field}`;
   }
