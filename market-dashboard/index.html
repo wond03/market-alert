@@ -138,7 +138,7 @@
   "use strict";
 
   var API = "https://api.gateio.ws/api/v4/futures/usdt";
-  var REFRESH_MS = 5000;
+  var WS_URL = "wss://fx-ws.gateio.ws/v4/ws/usdt";
   var BARS = 400;
 
   var INSTRUMENTS = [
@@ -863,64 +863,111 @@
       redrawOverlays(entry);
     });
   }
-  function loadLatestCandle(entry) {
-    var url = API + "/candlesticks?contract=" + entry.inst.key + "&interval=" + state.interval + "&limit=2";
-    return fetch(url, { cache: "no-store" }).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
-    }).then(function (raw) {
-      var data = toCandles(raw);
-      if (!data.length || !entry.data.length) return;
-      var last = data[data.length - 1];
-      entry.candles.update(last);
-      var arr = entry.data.slice();
-      if (arr[arr.length - 1].time === last.time) arr[arr.length - 1] = last; else arr.push(last);
-      entry.data = arr;
-      applyIndicatorData(entry);
-      redrawOverlays(entry);
-    });
+  /* ================= 实时数据（Gate.io WebSocket） ================= */
+  var ws = null, wsReady = false, wsRetry = 0, wsReconnectTimer = null;
+
+  function nowSec() { return Math.floor(Date.now() / 1000); }
+  function findEntry(key) {
+    for (var i = 0; i < charts.length; i++) { if (charts[i].inst.key === key) return charts[i]; }
+    return null;
   }
-  function loadTicker(entry) {
-    var url = API + "/tickers?contract=" + entry.inst.key;
-    return fetch(url, { cache: "no-store" }).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
-    }).then(function (arr) {
-      var t = arr && arr[0]; if (!t) return;
-      var last = Number(t.last), dp = priceDp(last), chg = Number(t.change_percentage);
-      var els = entry.panel;
-      els.querySelector('[data-role="price"]').textContent = fmt(last, dp);
-      var chgEl = els.querySelector('[data-role="chg"]');
-      chgEl.textContent = (chg >= 0 ? "+" : "") + fmt(chg, 2) + "%";
-      chgEl.className = "chg " + (chg >= 0 ? "up" : "down");
-      els.querySelector('[data-role="high"]').textContent = fmt(Number(t.high_24h), dp);
-      els.querySelector('[data-role="low"]').textContent = fmt(Number(t.low_24h), dp);
-      els.querySelector('[data-role="vol"]').textContent = fmt(Number(t.volume_24h_settle) / 1e6, 1) + "M";
-      els.querySelector('[data-role="idx"]').textContent = fmt(Number(t.index_price), dp);
-    });
+  function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+  function contracts() { return INSTRUMENTS.map(function (i) { return i.key; }); }
+  function subscribeTickers() {
+    wsSend({ time: nowSec(), channel: "futures.tickers", event: "subscribe", payload: contracts() });
+  }
+  function subscribeCandles() {
+    wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "subscribe", payload: [state.interval].concat(contracts()) });
+  }
+  function unsubscribeCandles(interval) {
+    wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "unsubscribe", payload: [interval].concat(contracts()) });
+  }
+
+  function applyTicker(t) {
+    var entry = findEntry(t.contract);
+    if (!entry) return;
+    var last = Number(t.last);
+    if (!isFinite(last)) return;
+    var dp = priceDp(last), chg = Number(t.change_percentage);
+    var els = entry.panel;
+    els.querySelector('[data-role="price"]').textContent = fmt(last, dp);
+    var chgEl = els.querySelector('[data-role="chg"]');
+    chgEl.textContent = (chg >= 0 ? "+" : "") + fmt(chg, 2) + "%";
+    chgEl.className = "chg " + (chg >= 0 ? "up" : "down");
+    els.querySelector('[data-role="high"]').textContent = fmt(Number(t.high_24h), dp);
+    els.querySelector('[data-role="low"]').textContent = fmt(Number(t.low_24h), dp);
+    els.querySelector('[data-role="vol"]').textContent = fmt(Number(t.volume_24h_settle) / 1e6, 1) + "M";
+    els.querySelector('[data-role="idx"]').textContent = fmt(Number(t.index_price), dp);
+  }
+
+  function applyCandle(c) {
+    var name = String(c.n || ""), us = name.indexOf("_");
+    if (us < 0) return;
+    var iv = name.slice(0, us), contract = name.slice(us + 1);
+    if (iv !== state.interval) return; // 屏蔽切换周期前遗留的旧订阅
+    var entry = findEntry(contract);
+    if (!entry) return;
+    var candle = {
+      time: Number(c.t), open: Number(c.o), high: Number(c.h),
+      low: Number(c.l), close: Number(c.c), volume: Number(c.v)
+    };
+    if (!isFinite(candle.time) || !isFinite(candle.close)) return;
+    entry.candles.update(candle);
+    var arr = entry.data.slice(), idx = -1;
+    for (var i = arr.length - 1; i >= 0; i--) { if (arr[i].time === candle.time) { idx = i; break; } }
+    if (idx >= 0) arr[idx] = candle;
+    else if (!arr.length || candle.time > arr[arr.length - 1].time) arr.push(candle);
+    else return; // 早于窗口的历史蜡烛，忽略
+    entry.data = arr;
+    applyIndicatorData(entry);
+    redrawOverlays(entry);
+  }
+
+  function onWsMessage(raw) {
+    var msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+    if (msg.event !== "update") return;
+    if (msg.channel === "futures.tickers") { (msg.result || []).forEach(applyTicker); }
+    else if (msg.channel === "futures.candlesticks") { (msg.result || []).forEach(applyCandle); }
   }
 
   function setStatus(ok) {
     var dot = document.getElementById("statusDot"), txt = document.getElementById("statusText");
     dot.classList.toggle("off", !ok);
-    txt.textContent = ok ? "已连接 · " + new Date().toLocaleTimeString("zh-CN") : "连接异常";
+    txt.textContent = ok ? "实时 · " + new Date().toLocaleTimeString("zh-CN") : "连接中断，重连中…";
   }
-  function refreshLoop() {
-    var errors = 0, tasks = [];
-    charts.forEach(function (e) {
-      tasks.push(loadTicker(e).catch(function () { errors++; }));
-      tasks.push(loadLatestCandle(e).catch(function () { errors++; }));
-    });
-    Promise.all(tasks).then(function () { setStatus(errors === 0); });
+
+  function wsConnect() {
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    try { ws = new WebSocket(WS_URL); } catch (e) { scheduleReconnect(); return; }
+    ws.onopen = function () { wsReady = true; wsRetry = 0; setStatus(true); subscribeTickers(); subscribeCandles(); };
+    ws.onmessage = function (e) { onWsMessage(e.data); };
+    ws.onclose = function () { wsReady = false; setStatus(false); scheduleReconnect(); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
-  function reloadAll() { charts.forEach(function (e) { loadCandles(e).catch(function () {}); }); refreshLoop(); }
+
+  function scheduleReconnect() {
+    wsRetry++;
+    var delay = Math.min(30000, 1000 * Math.pow(2, Math.min(wsRetry, 5)));
+    wsReconnectTimer = setTimeout(wsConnect, delay);
+  }
+
+  function reloadAll() {
+    charts.forEach(function (e) { loadCandles(e).catch(function () {}); });
+    if (wsReady) subscribeCandles();
+  }
 
   /* ================= UI ================= */
   function selectInterval(key) {
     if (state.interval === key) return;
+    var old = state.interval;
     state.interval = key;
     Array.prototype.forEach.call(document.getElementById("tfGroup").children, function (c) {
       c.classList.toggle("active", c.dataset.key === key);
     });
     document.getElementById("tfSelect").value = key;
+    if (wsReady) unsubscribeCandles(old);
     reloadAll();
   }
 
@@ -1153,7 +1200,7 @@
   rebuildAllIndicators();
   reloadAll();
   setActiveInst(state.activeInst);
-  setInterval(refreshLoop, REFRESH_MS);
+  wsConnect();
 })();
 </script>
 </body>
