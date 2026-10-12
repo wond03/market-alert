@@ -278,15 +278,20 @@ function simTrade(
   // 资金费：多头付、空头收（费率>0）；按持有上限 H 近似结算次数。
   const funding = (FUNDING[e.symbol] ?? 0) * dir * (H / 8);
   const endT = e.entryTs + H * 3600;
-  const i0 = idxAtOrAfter(candles, e.entryTs + SEC); // 从信号 K 线的下一根开始判定
+  const i0 = idxAtOrAfter(candles, e.entryTs); // 含信号 K 线
   const stopPrice = short ? entry * (1 + sl) : entry * (1 - sl);
   const tgtPrice = short ? entry * (1 - tp) : entry * (1 + tp);
   let lastClose: number | null = null;
   for (let i = i0; i < candles.length; i++) {
     const cd = candles[i];
     if (cd.t > endT) break;
-    lastClose = cd.c;
     const hitStop = short ? cd.h >= stopPrice : cd.l <= stopPrice;
+    if (cd.t === e.ts) {
+      // 信号 K 线：影线极值必然发生在入场之后，只判止损（保守）；不判止盈（极值/回撤时序不确定）。
+      if (hitStop) return { r: -sl, net: -sl - stopCost - funding, hit: "stop" };
+      continue;
+    }
+    lastClose = cd.c;
     const hitTgt = short ? cd.l <= tgtPrice : cd.h >= tgtPrice;
     if (hitStop) return { r: -sl, net: -sl - stopCost - funding, hit: "stop" };
     if (hitTgt) return { r: tp, net: tp - targetCost - funding, hit: "target" };
