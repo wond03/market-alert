@@ -110,10 +110,12 @@ export const pollAndCheck = internalAction({
         const rid = gate.ruleId(rule);
         let level: number;
         let isUp: boolean;
+        let desc: string | undefined;
         try {
           const resolved = await gate.resolveLevel(rule, baseCache);
           level = resolved.level;
           isUp = resolved.isUp;
+          desc = resolved.desc;
         } catch (e) {
           console.error(`resolve ${rid} failed: ${e}`);
           continue;
@@ -160,7 +162,7 @@ export const pollAndCheck = internalAction({
 
         if (firedTs !== null && firedPrice !== null) {
           const direction = isUp ? "上破" : "下破";
-          const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice);
+          const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice, desc);
           await ctx.runMutation(internal.market.insertAlerts, {
             alerts: [
               {
