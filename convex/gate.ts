@@ -447,6 +447,14 @@ export function fmtBeijing(ts: number): string {
   );
 }
 
+// 一根 K 线的时间区间（北京时间）。同一自然日时省略结束时间的日期。
+export function fmtCandleWindow(firedTs: number, secs: number): string {
+  const start = fmtBeijing(firedTs);
+  const end = fmtBeijing(firedTs + secs);
+  const sameDay = start.slice(0, 10) === end.slice(0, 10);
+  return sameDay ? `${start}\u2013${end.slice(11)}` : `${start}\u2013${end}`;
+}
+
 function escHtml(s: string): string {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -468,6 +476,7 @@ export function buildMessage(
   firedPrice: number,
   descOverride?: string,
   signal?: SignalKind,
+  intervalSec = 60,
 ): string {
   const arrow = isUp ? "\u{1F53C}" : "\u{1F53D}";
   const direction = isUp ? "上破" : "下破";
@@ -483,7 +492,8 @@ export function buildMessage(
     (signal ? `信号：<b>${SIGNAL_NAME[signal]}</b>\n` : "") +
     `关键位：<b>${fmtPrice(level)}</b>\n` +
     `触发价：${fmtPrice(firedPrice)}\n` +
-    `时间：${fmtBeijing(firedTs)} 北京时间\n` +
+    `K线：${fmtCandleWindow(firedTs, intervalSec)} 北京时间\n` +
+    `确认：${fmtBeijing(firedTs + intervalSec)} 北京时间\n` +
     `\n` +
     `${link}`
   );

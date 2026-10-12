@@ -166,7 +166,7 @@ export const pollAndCheck = internalAction({
 
           if (firedTs !== null && firedPrice !== null) {
             const direction = isUp ? "上破" : "下破";
-            const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice, desc);
+            const text = gate.buildMessage(rule, level, isUp, firedTs, firedPrice, desc, undefined, 60);
             await ctx.runMutation(internal.market.insertAlerts, {
               alerts: [
                 {
@@ -284,6 +284,7 @@ export const pollAndCheck = internalAction({
               ev.price,
               desc,
               ev.kind,
+              gate.BREAK_SECONDS,
             );
             await ctx.runMutation(internal.market.insertAlerts, {
               alerts: [
