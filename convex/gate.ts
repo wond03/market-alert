@@ -492,8 +492,7 @@ export function buildMessage(
     (signal ? `信号：<b>${SIGNAL_NAME[signal]}</b>\n` : "") +
     `关键位：<b>${fmtPrice(level)}</b>\n` +
     `触发价：${fmtPrice(firedPrice)}\n` +
-    `K线：${fmtCandleWindow(firedTs, intervalSec)} 北京时间\n` +
-    `确认：${fmtBeijing(firedTs + intervalSec)} 北京时间\n` +
+    `K线：${fmtCandleWindow(firedTs, intervalSec)} 北京时间（收盘确认）\n` +
     `\n` +
     `${link}`
   );
