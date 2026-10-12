@@ -565,6 +565,130 @@ function nestedHoldout(ents: Event[], series: Record<string, Candle[]>, title: s
   );
 }
 
+/* ================= 背景/状态特征（严格只用信号时刻及之前的数据） ================= */
+
+// 信号 K 线在序列中的下标（candles[i].t === e.ts）。
+function sigIndex(series: Record<string, Candle[]>, e: Event): number | null {
+  const c = series[e.symbol];
+  const i = idxAtOrAfter(c, e.ts);
+  return c[i] && c[i].t === e.ts ? i : null;
+}
+
+// 高周期趋势：近 bars 根的收盘变化率（bars=4→1h，16→4h）。
+function trendPct(series: Record<string, Candle[]>, e: Event, bars: number): number | null {
+  const c = series[e.symbol];
+  const i = sigIndex(series, e);
+  if (i === null || i < bars) return null;
+  return (c[i].c - c[i - bars].c) / c[i - bars].c;
+}
+
+// 波动率：近 win 根 15m 对数收益的标准差（win=96→24h）。
+function volPct(series: Record<string, Candle[]>, e: Event, win = 96): number | null {
+  const c = series[e.symbol];
+  const i = sigIndex(series, e);
+  if (i === null || i < win) return null;
+  const rs: number[] = [];
+  for (let k = i - win + 1; k <= i; k++) rs.push(Math.log(c[k].c / c[k - 1].c));
+  const m = avg(rs);
+  return Math.sqrt(avg(rs.map((x) => (x - m) ** 2)));
+}
+
+// 关键位被测试次数：信号前 look 根内，触及 level（±band）的次数。
+function touchCount(series: Record<string, Candle[]>, e: Event, look = 96, band = 0.0005): number | null {
+  const c = series[e.symbol];
+  const i = sigIndex(series, e);
+  if (i === null || i < look) return null;
+  const lo = e.level * (1 - band);
+  const hi = e.level * (1 + band);
+  let n = 0;
+  for (let k = i - look; k < i; k++) if (c[k].h >= lo && c[k].l <= hi) n++;
+  return n;
+}
+
+type BucketFn = (e: Event) => string | null;
+
+// 固定配置下，按某特征分桶，报告各桶净均/胜率/t。
+function bucketStats(
+  evs: Event[],
+  series: Record<string, Candle[]>,
+  cfg: Config,
+  title: string,
+  bucketOf: BucketFn,
+  order: string[],
+) {
+  const groups: Record<string, number[]> = {};
+  for (const e of evs) {
+    const b = bucketOf(e);
+    if (b === null) continue;
+    const nets = tradeNets([e], series, cfg);
+    if (!nets.length) continue;
+    (groups[b] ??= []).push(nets[0]);
+  }
+  console.log(
+    `\n=== ${title} ===  基配置 pen≥${pct(cfg.penMin)} SL${pct(cfg.sl)} TP${pct(cfg.tp)} H${cfg.H}h`,
+  );
+  for (const b of order) {
+    const nets = groups[b];
+    if (!nets || !nets.length) {
+      console.log(`  ${b.padEnd(20)}  n=  0`);
+      continue;
+    }
+    const s = statsOf(nets);
+    console.log(
+      `  ${b.padEnd(20)}  n=${pad(s.n, 3)}  净均 ${pct(s.net).padStart(7)}  胜率 ${pct(s.win).padStart(6)}  t=${s.t.toFixed(2)}`,
+    );
+  }
+}
+
+// 样本三分位阈值（探索性分桶用；正式过滤应以训练段定阈值）。
+function tertiles(xs: number[]): [number, number] {
+  const s = [...xs].sort((a, b) => a - b);
+  const q = (p: number) => s[Math.min(s.length - 1, Math.floor(s.length * p))];
+  return [q(0.33), q(0.66)];
+}
+
+/* ================= 背景/状态特征分组评估 ================= */
+
+function featureReport(wick: Event[], series: Record<string, Candle[]>, cfg: Config) {
+  console.log("\n################ 背景/状态特征分组（固定基配置，仅用信号前数据） ################");
+  console.log(`  说明：分桶是「诊断」——把样本切开看条件收益，t<2 才谈得上稳健，且阈值应以训练段为准。`);
+
+  // 1h / 4h 趋势对齐
+  const mkTrend = (bars: number, thr: number): BucketFn => (e) => {
+    const t = trendPct(series, e, bars);
+    if (t === null) return null;
+    const aligned = (e.isUp && t > thr) || (!e.isUp && t < -thr); // 突破方向与高周期趋势一致
+    const counter = (e.isUp && t < -thr) || (!e.isUp && t > thr);
+    return aligned ? "顺高周期趋势" : counter ? "逆高周期趋势" : "高周期走平";
+  };
+  bucketStats(wick, series, cfg, "按 1h 趋势对齐", mkTrend(4, 0.0015), ["顺高周期趋势", "逆高周期趋势", "高周期走平"]);
+  bucketStats(wick, series, cfg, "按 4h 趋势对齐", mkTrend(16, 0.003), ["顺高周期趋势", "逆高周期趋势", "高周期走平"]);
+
+  // 波动率分档（样本三分位）
+  const vols = wick.map((e) => volPct(series, e)).filter((v): v is number => v !== null);
+  const [v1, v2] = tertiles(vols);
+  const mkVol: BucketFn = (e) => {
+    const v = volPct(series, e);
+    if (v === null) return null;
+    return v <= v1 ? "低波动" : v <= v2 ? "中波动" : "高波动";
+  };
+  bucketStats(wick, series, cfg, `按 24h 波动率分档（阈值 ${pct(v1)}/${pct(v2)}）`, mkVol, ["低波动", "中波动", "高波动"]);
+
+  // 时段
+  const mkSession: BucketFn = (e) => currentSessionName(e.ts) ?? "时段间隙";
+  bucketStats(wick, series, cfg, "按时段", mkSession, ["亚洲盘", "伦敦盘", "纽约盘", "时段间隙"]);
+
+  // 关键位测试次数
+  const tou = wick.map((e) => touchCount(series, e)).filter((v): v is number => v !== null);
+  const [t1, t2] = tertiles(tou);
+  const mkTouch: BucketFn = (e) => {
+    const n = touchCount(series, e);
+    if (n === null) return null;
+    return n <= t1 ? "少测试" : n <= t2 ? "中测试" : "多测试";
+  };
+  bucketStats(wick, series, cfg, `按关键位近 24h 测试次数（阈值 ${Math.round(t1)}/${Math.round(t2)}）`, mkTouch, ["少测试", "中测试", "多测试"]);
+}
+
 async function main() {
   const series: Record<string, Candle[]> = {};
   const events: Event[] = [];
@@ -668,6 +792,28 @@ async function main() {
   const btcWick = wick.filter((e) => e.symbol === "BTC");
   walkForward(btcWick, series, "影线逆势 BTC", 4);
   nestedHoldout(btcWick, series, "影线逆势 BTC");
+
+  const baseCfg: Config = { penMin: 0.002, sl: 0.005, tp: 0.006, H: 8 };
+  featureReport(wick, series, baseCfg);
+
+  // —— 单项背景过滤的嵌套验证（规则固定、不调参） ——
+  const noAligned = wick.filter((e) => {
+    const t = trendPct(series, e, 4);
+    if (t === null) return true;
+    const aligned = (e.isUp && t > 0.0015) || (!e.isUp && t < -0.0015);
+    return !aligned;
+  });
+  console.log("\n################ 过滤①：剔除「15m 突破与 1h 趋势同向」的逆势信号 ################");
+  walkForward(noAligned, allCandles, "影线逆势 · 剔顺1h趋势", 4);
+  nestedHoldout(noAligned, allCandles, "影线逆势 · 剔顺1h趋势");
+
+  const noHighVol = wick.filter((e) => {
+    const v = volPct(series, e);
+    return v === null || v <= 0.0015;
+  });
+  console.log("\n################ 过滤②：剔除 24h 波动率 > 0.15%/15m 的高波动时段 ################");
+  walkForward(noHighVol, allCandles, "影线逆势 · 剔高波动", 4);
+  nestedHoldout(noHighVol, allCandles, "影线逆势 · 剔高波动");
 }
 
 main().catch((e) => {
