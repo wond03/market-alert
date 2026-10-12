@@ -51,4 +51,43 @@ export default defineSchema({
     price: v.number(),
     text: v.string(),
   }).index("by_ts", ["ts"]),
+
+  // 纸面跟踪：每个 (交易所:标的:field:dir) 的 15m 布防状态（仅记录，不推送/不交易）
+  paperState: defineTable({
+    key: v.string(),
+    level: v.number(),
+    side: v.union(v.literal("above"), v.literal("below")),
+    wickDone: v.boolean(),
+    checked: v.number(),
+  }).index("by_key", ["key"]),
+
+  // 纸面跟踪：影线逆势候选信号与假设成交（kept=true 才会被止损止盈管理）
+  paperTrades: defineTable({
+    exchange: v.string(),
+    symbol: v.string(),
+    field: v.string(), // high | low
+    dir: v.string(), // up | down
+    tradeDir: v.string(), // short | long
+    sigTs: v.number(),
+    level: v.number(),
+    entryPrice: v.number(),
+    entryTs: v.number(),
+    pen: v.number(), // 刺破幅度
+    trend1h: v.number(), // 信号时 1h 趋势
+    vol24h: v.number(), // 24h 波动率
+    sl: v.number(),
+    tp: v.number(),
+    holdH: v.number(),
+    status: v.string(), // open | closed | skipped
+    skipReason: v.optional(v.string()),
+    exitTs: v.optional(v.number()),
+    exitPrice: v.optional(v.number()),
+    reason: v.optional(v.string()), // stop | target | timeout
+    gross: v.optional(v.number()),
+    net: v.optional(v.number()),
+    openedAt: v.number(),
+    closedAt: v.optional(v.number()),
+  })
+    .index("by_status", ["status"])
+    .index("by_entryTs", ["entryTs"]),
 });
