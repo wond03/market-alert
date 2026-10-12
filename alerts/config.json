@@ -1,9 +1,0 @@
-{
-  "_readme": "rules 为空时机器人静默待命。支持两种规则: 固定价位(cross_up/cross_down) 与 指标突破(breakout, prev_ohlc)。详见 README.md。",
-  "_examples": [
-    "{ \"symbol\": \"BTC_USDT\", \"label\": \"BTC\", \"type\": \"cross_up\", \"price\": 90000 }",
-    "{ \"symbol\": \"BTC_USDT\", \"label\": \"BTC\", \"type\": \"breakout\", \"indicator\": \"prev_ohlc\", \"tf\": \"1d\", \"offset\": 2, \"field\": \"high\", \"dir\": \"up\" }",
-    "{ \"symbol\": \"XAU_USDT\", \"label\": \"XAU\", \"type\": \"breakout\", \"indicator\": \"prev_ohlc\", \"tf\": \"4h\", \"offset\": 2, \"field\": \"low\", \"dir\": \"down\" }"
-  ],
-  "rules": []
-}
