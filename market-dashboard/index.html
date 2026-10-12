@@ -878,10 +878,14 @@
     wsSend({ time: nowSec(), channel: "futures.tickers", event: "subscribe", payload: contracts() });
   }
   function subscribeCandles() {
-    wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "subscribe", payload: [state.interval].concat(contracts()) });
+    contracts().forEach(function (k) {
+      wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "subscribe", payload: [state.interval, k] });
+    });
   }
   function unsubscribeCandles(interval) {
-    wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "unsubscribe", payload: [interval].concat(contracts()) });
+    contracts().forEach(function (k) {
+      wsSend({ time: nowSec(), channel: "futures.candlesticks", event: "unsubscribe", payload: [interval, k] });
+    });
   }
 
   function applyTicker(t) {
