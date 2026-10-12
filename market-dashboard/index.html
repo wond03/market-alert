@@ -52,9 +52,6 @@
   .slabel { position: absolute; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); }
   .sline { position: absolute; height: 0; border-top: 1px dashed; }
   .snode { position: absolute; font-size: 9px; white-space: nowrap; }
-  .ohlc-fill { position: absolute; box-sizing: border-box; pointer-events: none; }
-  .ohlc-line { position: absolute; height: 0; pointer-events: none; }
-  .ohlc-label { position: absolute; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px rgba(0,0,0,0.9); pointer-events: none; }
   .smc-fill { position: absolute; box-sizing: border-box; pointer-events: none; }
   .smc-fvg { position: absolute; box-sizing: border-box; border-left: 1px solid; border-right: 1px solid; pointer-events: none; }
   .smc-line { position: absolute; height: 0; pointer-events: none; }
@@ -426,42 +423,6 @@
         { key: "s3end", label: "结束", type: "time", def: "16:00", group: "第三时段" },
         { key: "s3tz", label: "时区 (IANA)", type: "text", def: "America/New_York", group: "第三时段" },
         { key: "s3color", label: "颜色", type: "color", def: "#089981", group: "第三时段" }
-      ],
-      series: [],
-      calc: null
-    },
-    prevOHLC: {
-      name: "前一时段 OHLC", pane: "main", type: "prevOHLC",
-      params: [
-        { key: "tf", label: "时间周期", type: "select", def: "1d", group: "常规设置", options: [
-          { value: "15m", label: "15分钟" }, { value: "1h", label: "1小时" }, { value: "4h", label: "4小时" }, { value: "1d", label: "日线" }
-        ] },
-        { key: "offset", label: "周期偏移", type: "int", def: 1, group: "常规设置" },
-        { key: "showLabel", label: "显示标签", type: "bool", def: false, group: "常规设置" },
-        { key: "extend", label: "延长至右侧", type: "bool", def: false, group: "常规设置" },
-        { key: "fillOn", label: "填充高低区间", type: "bool", def: true, group: "常规设置" },
-        { key: "fillColor", label: "填充颜色", type: "color", def: "#c0c0c0", group: "常规设置" },
-        { key: "fillOpacity", label: "填充透明度%", type: "int", def: 80, group: "常规设置" },
-
-        { key: "openOn", label: "开 显示", type: "bool", def: true, group: "线条样式" },
-        { key: "openStyle", label: "开 线型", type: "select", def: "dashed", group: "线条样式", options: LINE_STYLE_OPTS },
-        { key: "openColor", label: "开 颜色", type: "color", def: "#2962FF", group: "线条样式" },
-        { key: "openWidth", label: "开 粗细", type: "int", def: 1, group: "线条样式" },
-
-        { key: "highOn", label: "高 显示", type: "bool", def: true, group: "线条样式" },
-        { key: "highStyle", label: "高 线型", type: "select", def: "solid", group: "线条样式", options: LINE_STYLE_OPTS },
-        { key: "highColor", label: "高 颜色", type: "color", def: "#26A69A", group: "线条样式" },
-        { key: "highWidth", label: "高 粗细", type: "int", def: 1, group: "线条样式" },
-
-        { key: "lowOn", label: "低 显示", type: "bool", def: true, group: "线条样式" },
-        { key: "lowStyle", label: "低 线型", type: "select", def: "solid", group: "线条样式", options: LINE_STYLE_OPTS },
-        { key: "lowColor", label: "低 颜色", type: "color", def: "#EF5350", group: "线条样式" },
-        { key: "lowWidth", label: "低 粗细", type: "int", def: 1, group: "线条样式" },
-
-        { key: "closeOn", label: "收 显示", type: "bool", def: true, group: "线条样式" },
-        { key: "closeStyle", label: "收 线型", type: "select", def: "dashed", group: "线条样式", options: LINE_STYLE_OPTS },
-        { key: "closeColor", label: "收 颜色", type: "color", def: "#2962FF", group: "线条样式" },
-        { key: "closeWidth", label: "收 粗细", type: "int", def: 1, group: "线条样式" }
       ],
       series: [],
       calc: null
@@ -878,138 +839,6 @@
     });
   }
 
-  /* ================= previous OHLC (前一时段 O/H/L/C) ================= */
-  var TF_SECONDS = { "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
-  var INTERVAL_SECONDS = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
-  var OHLC_LABELS = { open: "开", high: "高", low: "低", close: "收" };
-
-  function aggregatePeriods(data, secs) {
-    var out = [], cur = null;
-    for (var i = 0; i < data.length; i++) {
-      var key = Math.floor((data[i].time + BJ_OFFSET) / secs);
-      if (!cur || cur.key !== key) {
-        if (cur) out.push(cur);
-        cur = { key: key, i0: i, i1: i, open: data[i].open, high: data[i].high, low: data[i].low, close: data[i].close };
-      } else {
-        cur.i1 = i;
-        if (data[i].high > cur.high) cur.high = data[i].high;
-        if (data[i].low < cur.low) cur.low = data[i].low;
-        cur.close = data[i].close;
-      }
-    }
-    if (cur) out.push(cur);
-    return out;
-  }
-
-  function drawOHLC(entry) {
-    var el = entry.ohlcEl;
-    if (!el) return;
-    el.innerHTML = "";
-    if (!entry.ohlcOn) return;
-    var d = entry.data;
-    if (!d || d.length < 2) return;
-    var p = active.prevOHLC.params;
-
-    var tf = TF_SECONDS[p.tf] ? p.tf : "1d";
-    var secs = TF_SECONDS[tf];
-    var chartSecs = INTERVAL_SECONDS[state.interval] || 900;
-    if (chartSecs > secs) return; // 图表周期比目标周期更粗，无法聚合
-
-    var periods = aggregatePeriods(d, secs);
-    if (!periods.length) return;
-    var off = Math.max(1, parseInt(p.offset, 10) || 1);
-    var shift = off - 1; // 用第 (k-shift) 个周期的数值，画在第 k 个周期的时间段上
-
-    var ts = entry.mainChart.timeScale();
-    var vr = null;
-    try { vr = ts.getVisibleLogicalRange(); } catch (e) {}
-    if (!vr) return;
-    var plotW = ts.width ? ts.width() : entry.mainWrap.clientWidth;
-    var axisH = 0;
-    try { axisH = ts.height() || 0; } catch (e) {}
-    var boxH = entry.mainWrap.clientHeight - axisH;
-    if (boxH <= 0) boxH = entry.mainWrap.clientHeight;
-    function coord(i) { try { var c = ts.logicalToCoordinate(i); return (c === null || !isFinite(c)) ? null : c; } catch (e) { return null; } }
-    function yOf(v) { try { var y = entry.candles.priceToCoordinate(v); return (y === null || !isFinite(y)) ? null : y; } catch (e) { return null; } }
-
-    var fo = Number(p.fillOpacity);
-    if (!isFinite(fo)) fo = 80;
-    fo = Math.max(0, Math.min(100, fo));
-    var fill = hexToRgba(p.fillColor || "#c0c0c0", fo / 100);
-
-    // 收集所有可见周期（每个周期一组 O/H/L/C）
-    var items = [];
-    for (var k = 0; k < periods.length; k++) {
-      var per = periods[k];
-      if (per.i1 < vr.from || per.i0 > vr.to) continue;
-      var src = periods[k - shift];
-      if (!src) continue;
-      var c0 = coord(per.i0), c1 = coord(per.i1), cn = coord(per.i0 + 1), bs = null;
-      if (cn !== null && c0 !== null) bs = cn - c0;
-      else if (c0 !== null && c1 !== null && per.i1 > per.i0) bs = (c1 - c0) / (per.i1 - per.i0);
-      if (bs === null || !isFinite(bs) || bs <= 0) bs = plotW / Math.max(1, vr.to - vr.from);
-      var x0 = (per.i0 < vr.from) ? 0 : (c0 === null ? 0 : c0 - bs / 2);
-      var x1 = (per.i1 + 1 > vr.to) ? plotW : (c1 === null ? plotW : c1 + bs / 2);
-      x0 = Math.max(0, x0); x1 = Math.min(plotW, x1);
-      if (p.extend) x1 = plotW;
-      if (x1 - x0 < 0.5) continue;
-      items.push({ x0: x0, x1: x1, src: src });
-    }
-    if (!items.length) return;
-
-    // 先画填充（高~低区间），再画线，避免相邻填充盖住线
-    if (p.fillOn) {
-      items.forEach(function (it) {
-        var yh = yOf(it.src.high), yl = yOf(it.src.low);
-        if (yh === null || yl === null) return;
-        var yTop = Math.max(0, Math.min(yh, yl));
-        var yBot = Math.min(boxH, Math.max(yh, yl));
-        if (yBot - yTop < 1) return;
-        var fdiv = document.createElement("div");
-        fdiv.className = "ohlc-fill";
-        fdiv.style.left = it.x0 + "px"; fdiv.style.width = (it.x1 - it.x0) + "px";
-        fdiv.style.top = yTop + "px"; fdiv.style.height = (yBot - yTop) + "px";
-        fdiv.style.background = fill;
-        el.appendChild(fdiv);
-      });
-    }
-
-    var KEYS = ["open", "high", "low", "close"].filter(function (k) { return p[k + "On"] !== false; });
-    function lineStyle(key) {
-      var sv = String(p[key + "Style"] || "solid");
-      return sv === "dashed" ? "dashed" : (sv === "dotted" ? "dotted" : "solid");
-    }
-    items.forEach(function (it) {
-      KEYS.forEach(function (key) {
-        var y = yOf(it.src[key]);
-        if (y === null) return;
-        var ldiv = document.createElement("div");
-        ldiv.className = "ohlc-line";
-        ldiv.style.left = it.x0 + "px"; ldiv.style.width = (it.x1 - it.x0) + "px";
-        ldiv.style.top = y + "px";
-        ldiv.style.borderTopWidth = Math.max(1, parseInt(p[key + "Width"], 10) || 1) + "px";
-        ldiv.style.borderTopStyle = lineStyle(key);
-        ldiv.style.borderTopColor = p[key + "Color"] || "#888888";
-        el.appendChild(ldiv);
-      });
-    });
-
-    // 标签只标最后一个周期，避免刷屏
-    if (p.showLabel && items.length) {
-      var last = items[items.length - 1];
-      KEYS.forEach(function (key) {
-        var y = yOf(last.src[key]);
-        if (y === null) return;
-        var lab = document.createElement("div");
-        lab.className = "ohlc-label";
-        lab.textContent = OHLC_LABELS[key] + " " + fmt(last.src[key], priceDp(last.src[key]));
-        lab.style.color = p[key + "Color"] || "#888888";
-        lab.style.left = (last.x0 + 3) + "px"; lab.style.top = (y - 13) + "px";
-        el.appendChild(lab);
-      });
-    }
-  }
-
   /* ================= SMC 结构（Smart Money Concepts [LuxAlgo] 移植） ================= */
   /* 逐条对照官方开源 Pine 脚本（CC BY-NC-SA 4.0, © LuxAlgo，「Smart Money Concepts [LuxAlgo]」）
      移植，判定与 convex/luxSmc.ts 完全一致：
@@ -1386,7 +1215,6 @@
 
   function redrawOverlays(entry) {
     if (entry.sessionsOn) drawSessions(entry);
-    drawOHLC(entry);
     if (entry.smcOn) drawSMC(entry);
   }
 
@@ -1414,14 +1242,12 @@
     entry.subContainer.innerHTML = "";
     entry.subPanes = [];
     if (entry.sessionsEl) { entry.sessionsEl.innerHTML = ""; entry.sessionsOn = false; }
-    if (entry.ohlcEl) { entry.ohlcEl.innerHTML = ""; entry.ohlcOn = false; }
     if (entry.smcEl) { entry.smcEl.innerHTML = ""; entry.smcOn = false; }
 
     Object.keys(IND).forEach(function (key) {
       var def = IND[key];
       if (def.pane === "main") {
         if (def.type === "sessions") { if (active[key].on) entry.sessionsOn = true; return; }
-        if (def.type === "prevOHLC") { if (active[key].on) entry.ohlcOn = true; return; }
         if (def.type === "smc") { if (active[key].on) entry.smcOn = true; return; }
         if (!active[key].on) return;
         var series = def.series.map(function (sp) { return makeSeries(entry.mainChart, sp); });
@@ -1847,7 +1673,6 @@
         '</div>' +
         '<div class="main-wrap">' +
           '<div class="sessions-overlay" data-role="sessions"></div>' +
-          '<div class="sessions-overlay" data-role="ohlc"></div>' +
           '<div class="sessions-overlay" data-role="smc"></div>' +
           '<div class="chart-main" data-role="main"></div>' +
           '<button class="rt-btn" data-role="btnNow" title="回到最新">\u00BB</button>' +
@@ -1863,7 +1688,6 @@
       var subEl = panel.querySelector('[data-role="subs"]');
       var mainWrap = panel.querySelector('.main-wrap');
       var sessionsEl = panel.querySelector('[data-role="sessions"]');
-      var ohlcEl = panel.querySelector('[data-role="ohlc"]');
       var smcEl = panel.querySelector('[data-role="smc"]');
       var mc = LightweightCharts.createChart(mainEl, Object.assign({}, BASE_CHART, { width: mainEl.clientWidth || 600, height: mainEl.clientHeight || 520 }));
       var candles = mc.addCandlestickSeries({ upColor: COL.up, downColor: COL.down, borderUpColor: COL.up, borderDownColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
@@ -1875,7 +1699,7 @@
       var entry = {
         inst: inst, panel: panel, data: [], mainChart: mc, candles: candles,
         subContainer: subEl, mainOverlays: [], subPanes: [], autoScale: true, logScale: false,
-        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, ohlcEl: ohlcEl, ohlcOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow
+        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow
       };
       mc.timeScale().subscribeVisibleLogicalRangeChange(function () { redrawOverlays(entry); updateNowBtn(entry); });
       btnNow.addEventListener("click", function () { try { mc.timeScale().scrollToRealTime(); } catch (e) {} updateNowBtn(entry); });
