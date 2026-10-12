@@ -25,6 +25,7 @@ async function sendTelegram(text: string): Promise<void> {
     body: JSON.stringify({
       chat_id: chatId,
       text,
+      parse_mode: "HTML",
       disable_web_page_preview: true,
     }),
   });
@@ -38,7 +39,9 @@ export const sendTest = internalAction({
   args: {},
   handler: async () => {
     await sendTelegram(
-      "\u{1F4C8} 行情警报（测试）\n\n收到这条说明 Convex → Telegram 推送已打通。",
+      "\u{1F4C8} <b>行情警报（测试）</b>\n\n" +
+        "收到这条说明 Convex → Telegram 推送已打通。\n\n" +
+        `<a href="${gate.DASHBOARD_URL}">\u{1F4C8} 打开看盘页</a>`,
     );
   },
 });
@@ -178,7 +181,7 @@ export const pollAndCheck = internalAction({
               },
             ],
           });
-          await sendTelegram(`\u{1F4C8} 行情警报\n\n${text}`);
+          await sendTelegram(text);
         }
       }
     }

@@ -1606,7 +1606,11 @@
       var div = document.createElement("div"); div.className = "alert-item";
       var t = new Date(a.ts * 1000);
       var hh = ("0" + t.getHours()).slice(-2), mm = ("0" + t.getMinutes()).slice(-2);
-      div.innerHTML = "<b>" + hh + ":" + mm + "</b> " + String(a.text || "").replace(/\s+/g, " ");
+      var txt = String(a.text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      var b = document.createElement("b");
+      b.textContent = hh + ":" + mm;
+      div.appendChild(b);
+      div.appendChild(document.createTextNode(" " + txt));
       el.appendChild(div);
     });
   }

@@ -36,6 +36,9 @@ export const EXCHANGE_NAME: Record<string, string> = {
   okx: "OKX",
 };
 
+// 看盘页地址（GitHub Pages），用于告警推送里附上可点击链接。
+export const DASHBOARD_URL = "https://wond03.github.io/market-alert/";
+
 // 交易时段（与看盘页「交易时段 Sessions」指标默认值一致，用各自交易所所在时区）
 export type Session = { name: string; tz: string; start: number; end: number };
 export const SESSIONS: Session[] = [
@@ -327,6 +330,14 @@ export function fmtBeijing(ts: number): string {
   );
 }
 
+function escHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// 生成 Telegram（HTML parse_mode）告警文案。
 export function buildMessage(
   rule: RuleDoc,
   level: number,
@@ -338,12 +349,16 @@ export function buildMessage(
   const arrow = isUp ? "\u{1F53C}" : "\u{1F53D}";
   const direction = isUp ? "上破" : "下破";
   const desc = descOverride ?? ruleDesc(rule);
-  const exName = EXCHANGE_NAME[rule.exchange ?? "gate"] ?? rule.exchange;
-  let subject = `${exName} ${rule.label} ${direction}`;
-  subject += desc ? ` ${desc}` : ` ${fmtPrice(level)}`;
+  const exName = EXCHANGE_NAME[rule.exchange ?? "gate"] ?? rule.exchange ?? "Gate";
+  const title = `${exName} ${rule.label} ${direction}${desc ? "「" + desc + "」" : ""}`;
+  const link = `<a href="${DASHBOARD_URL}">\u{1F4C8} 打开看盘页</a>`;
   return (
-    `${arrow} ${subject}\n` +
-    `穿越 ${fmtPrice(level)} 于 ${fmtBeijing(firedTs)} 北京时间` +
-    `（收 ${fmtPrice(firedPrice)}）`
+    `${arrow} <b>${escHtml(title)}</b>\n` +
+    `\n` +
+    `关键位：<b>${fmtPrice(level)}</b>\n` +
+    `触发价：${fmtPrice(firedPrice)}\n` +
+    `时间：${fmtBeijing(firedTs)} 北京时间\n` +
+    `\n` +
+    `${link}`
   );
 }
