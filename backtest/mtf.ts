@@ -1,16 +1,16 @@
-// MTF 决策函数回测：1h 结构（size=4）定方向 → 5m/15m 首个同向 BOS/CHoCH。
-// 两种入场对比：
-//  - break：确认 K 收盘价立即进场（追突破）。
-//  - retest：确认后等价格回踩该突破生成的订单块(OB)再进场（不追）。
-// 出场沿用旧口径（固定 SL/TP + 8h 兜底 + 成本/资金费，smcCore.manage）。
-// 另附「只做小周期突破、不加 1h 过滤」的对照。
+// MTF 决策函数 —— 组件分解回测。
+// 信号：1h 结构（size=4）定方向 → 5m/15m 首个同向 BOS/CHoCH 确认。
+// 入场：break=确认收盘追进；retest=回踩该突破的订单块;fvg=回踩同向未填补 FVG。
+// 出场：固定 SL/TP + 8h 兜底 + 成本/资金费（smcCore.manage）。
+// 报告：整体 + 按 突破类型(BOS/CHoCH)、交易时段、方向 分解。
 //
 // 运行：./node_modules/.bin/esbuild backtest/mtf.ts --bundle --platform=node --format=esm \
 //        --outfile=/tmp/mtfbt.mjs && node /tmp/mtfbt.mjs
 
 import { contractOf, type Candle } from "../convex/exchanges";
+import { currentSessionName } from "../convex/gate";
 import { fetchHistory } from "./history";
-import { runStructure } from "../convex/luxSmc";
+import { computeFvgs, runStructure, type Fvg } from "../convex/luxSmc";
 import { manage } from "../convex/smcCore";
 
 const SYMBOLS = ["BTC", "XAU"];
@@ -25,17 +25,19 @@ const CFGS = [
 const pct = (x: number) => (x * 100).toFixed(2) + "%";
 const pad = (s: unknown, w = 4) => String(s).padStart(w);
 
+type Mode = "break" | "retest" | "fvg";
+
 type Row = {
   symbol: string;
   tf: "5m" | "15m";
   ts: number;
   dir: "long" | "short";
-  group: string;
+  tag: string;
+  session: string;
   sl: number;
   tp: number;
   gross: number;
   net: number;
-  reason: string;
 };
 
 type Ev = {
@@ -50,6 +52,8 @@ type Ev = {
   obLow?: number;
 };
 
+type Ctx = { c5: Candle[]; c15: Candle[]; fvg5: Fvg[]; fvg15: Fvg[] };
+
 function eventsOf(c1h: Candle[], c5: Candle[], c15: Candle[]): Ev[] {
   const s1h = runStructure(c1h, SWING);
   const s5 = runStructure(c5, SWING);
@@ -62,7 +66,7 @@ function eventsOf(c1h: Candle[], c5: Candle[], c15: Candle[]): Ev[] {
   s5.breaks.forEach((b, i) =>
     evs.push({ t: b.t, kind: "5m", rank: 2, dir: b.dir, idx: b.idx, tag: b.tag, level: b.level, obHigh: s5.orderBlocks[i]?.high, obLow: s5.orderBlocks[i]?.low }),
   );
-  evs.sort((a, b) => (a.t - b.t) || (a.rank - b.rank));
+  evs.sort((a, b) => a.t - b.t || a.rank - b.rank);
   return evs;
 }
 
@@ -87,7 +91,10 @@ function buildSignals(c1h: Candle[], c5: Candle[], c15: Candle[]): { mtf: Ev[]; 
   return { mtf, base };
 }
 
-// 回踩订单块进场：突破后价格首次回到该突破的 OB 区间。
+function seriesOf(ctx: Ctx, ev: Ev): { series: Candle[]; fvgs: Fvg[] } {
+  return ev.kind === "5m" ? { series: ctx.c5, fvgs: ctx.fvg5 } : { series: ctx.c15, fvgs: ctx.fvg15 };
+}
+
 function entryForOB(series: Candle[], ev: Ev): { idx: number; price: number } | null {
   if (ev.obHigh === undefined || ev.obLow === undefined) return null;
   for (let k = ev.idx + 1; k < series.length; k++) {
@@ -97,41 +104,46 @@ function entryForOB(series: Candle[], ev: Ev): { idx: number; price: number } | 
   return null;
 }
 
-function runSignals(
-  symbol: string,
-  sigs: Ev[],
-  seriesFor: (ev: Ev) => Candle[],
-  group: string,
-  mode: "break" | "retest",
-): Row[] {
+function entryForFvg(series: Candle[], fvgs: Fvg[], ev: Ev): { idx: number; price: number } | null {
+  const cands = fvgs.filter((f) => f.idx <= ev.idx && f.dir === ev.dir && (f.mitigatedIdx === null || f.mitigatedIdx > ev.idx));
+  let best: { idx: number; price: number } | null = null;
+  for (const f of cands) {
+    for (let k = ev.idx + 1; k < series.length; k++) {
+      const bar = series[k];
+      if (bar.l <= f.top && bar.h >= f.bottom) {
+        const price = ev.dir === "bull" ? Math.min(f.top, bar.o) : Math.max(f.bottom, bar.o);
+        if (!best || k < best.idx) best = { idx: k, price };
+        break;
+      }
+    }
+  }
+  return best;
+}
+
+function runSignals(symbol: string, sigs: Ev[], ctx: Ctx, mode: Mode): Row[] {
   const rows: Row[] = [];
   for (const ev of sigs) {
-    const series = seriesFor(ev);
-    let entryIdx: number;
-    let entryPrice: number;
+    const { series, fvgs } = seriesOf(ctx, ev);
+    let entry: { idx: number; price: number } | null;
     if (mode === "break") {
       const bar = series.find((c) => c.t === ev.t);
-      if (!bar) continue;
-      entryIdx = ev.idx;
-      entryPrice = bar.c;
+      entry = bar ? { idx: ev.idx, price: bar.c } : null;
+    } else if (mode === "retest") {
+      entry = entryForOB(series, ev);
     } else {
-      const e = entryForOB(series, ev);
-      if (!e) continue;
-      entryIdx = e.idx;
-      entryPrice = e.price;
+      entry = entryForFvg(series, fvgs, ev);
     }
-    const sigTs = series[entryIdx].t;
+    if (!entry) continue;
+    const sigTs = series[entry.idx].t;
     const dir = ev.dir === "bull" ? "long" : "short";
-    const dataEnd = series[series.length - 1].t + (ev.kind === "5m" ? 300 : 900);
+    const tfSec = ev.kind === "5m" ? 300 : 900;
+    const dataEnd = series[series.length - 1].t + tfSec;
     if (sigTs + HOLD_H * 3600 > dataEnd) continue;
+    const session = currentSessionName(sigTs + tfSec) ?? "时段外";
     for (const cfg of CFGS) {
-      const out = manage(
-        series,
-        { tradeDir: dir, entryPrice, sl: cfg.sl, tp: cfg.tp, sigTs, holdH: HOLD_H, symbol },
-        dataEnd,
-      );
+      const out = manage(series, { tradeDir: dir, entryPrice: entry.price, sl: cfg.sl, tp: cfg.tp, sigTs, holdH: HOLD_H, symbol }, dataEnd);
       if (!out) continue;
-      rows.push({ symbol, tf: ev.kind as "5m" | "15m", ts: sigTs, dir, group, sl: cfg.sl, tp: cfg.tp, gross: out.gross, net: out.net, reason: out.reason });
+      rows.push({ symbol, tf: ev.kind as "5m" | "15m", ts: sigTs, dir, tag: ev.tag, session, sl: cfg.sl, tp: cfg.tp, gross: out.gross, net: out.net });
     }
   }
   return rows;
@@ -146,54 +158,51 @@ function statsOf(xs: number[]) {
 
 function line(label: string, rows: Row[], key: "net" | "gross" = "net") {
   const s = statsOf(rows.map((r) => r[key]));
-  console.log(`  ${label.padEnd(24)} n=${pad(s.n, 4)}  ${pad(pct(s.mean), 8)}  胜率 ${pad(pct(s.win), 7)}  t=${s.t.toFixed(2)}`);
+  console.log(`  ${label.padEnd(10)} n=${pad(s.n, 4)}  毛 ${pad(pct(statsOf(rows.map((r) => r.gross)).mean), 8)}  净 ${pad(pct(s.mean), 8)}  胜率 ${pad(pct(s.win), 7)}  t=${s.t.toFixed(2)}`);
 }
 
-function report(name: string, rows: Row[], tsLo: number, tsHi: number) {
-  console.log(`\n================ ${name} ================`);
-  for (const cfg of CFGS) {
-    const rs = rows.filter((r) => r.sl === cfg.sl && r.tp === cfg.tp);
-    console.log(`\n[SL/TP ${cfg.name}]  毛/净`);
-    line("全部(净)", rs, "net");
-    line("全部(毛)", rs, "gross");
-    line("5m", rs.filter((r) => r.tf === "5m"));
-    line("15m", rs.filter((r) => r.tf === "15m"));
-    const mid = tsLo + (tsHi - tsLo) * 0.7;
-    line("前70%(内)", rs.filter((r) => r.ts <= mid));
-    line("后30%(外)", rs.filter((r) => r.ts > mid));
-    for (const sym of SYMBOLS) line(sym, rs.filter((r) => r.symbol === sym));
-  }
-}
-
-async function main() {
-  const mtfBreak: Row[] = [];
-  const mtfRetest: Row[] = [];
-  const baseBreak: Row[] = [];
+async function mainAsync() {
+  const byMode: Record<Mode, Row[]> = { break: [], retest: [], fvg: [] };
+  const byBase: Row[] = [];
   let lo = Infinity;
   let hi = 0;
   for (const sym of SYMBOLS) {
     const contract = contractOf("gate", sym);
-    console.log(`拉取 ${sym} 1h/15m/5m 历史…`);
     const c1h = await fetchHistory(contract, "1h", 2000);
     const c15 = await fetchHistory(contract, "15m", 9600);
     const c5 = await fetchHistory(contract, "5m", 9000);
-    console.log(
-      `  ${sym}: 1h ${c1h.length} / 15m ${c15.length} / 5m ${c5.length}  ` +
-        `(${new Date(c5[0].t * 1000).toISOString().slice(0, 10)} ~ ${new Date(c5[c5.length - 1].t * 1000).toISOString().slice(0, 10)})`,
-    );
     lo = Math.min(lo, c5[0].t);
     hi = Math.max(hi, c5[c5.length - 1].t);
+    const ctx: Ctx = { c5, c15, fvg5: computeFvgs(c5), fvg15: computeFvgs(c15) };
     const { mtf, base } = buildSignals(c1h, c5, c15);
-    console.log(`  事件：MTF 信号 ${mtf.length}（5m ${mtf.filter((e) => e.kind === "5m").length} / 15m ${mtf.filter((e) => e.kind === "15m").length}），对照 ${base.length}`);
-    const seriesFor = (ev: Ev) => (ev.kind === "5m" ? c5 : c15);
-    mtfBreak.push(...runSignals(sym, mtf, seriesFor, "mtf-break", "break"));
-    mtfRetest.push(...runSignals(sym, mtf, seriesFor, "mtf-retest", "retest"));
-    baseBreak.push(...runSignals(sym, base, seriesFor, "base-break", "break"));
+    console.log(`${sym}: MTF ${mtf.length}（5m ${mtf.filter((e) => e.kind === "5m").length}/15m ${mtf.filter((e) => e.kind === "15m").length}）  对照 ${base.length}`);
+    byMode.break.push(...runSignals(sym, mtf, ctx, "break"));
+    byMode.retest.push(...runSignals(sym, mtf, ctx, "retest"));
+    byMode.fvg.push(...runSignals(sym, mtf, ctx, "fvg"));
+    byBase.push(...runSignals(sym, base, ctx, "break"));
   }
-  console.log(`\n窗口：${new Date(lo * 1000).toISOString().slice(0, 10)} ~ ${new Date(hi * 1000).toISOString().slice(0, 10)}`);
-  report("MTF · 追突破进场", mtfBreak, lo, hi);
-  report("MTF · 回踩 OB 进场", mtfRetest, lo, hi);
-  report("对照 · 小周期突破追进（无 1h 过滤）", baseBreak, lo, hi);
+  console.log(`\n窗口：${new Date(lo * 1000).toISOString().slice(0, 10)} ~ ${new Date(hi * 1000).toISOString().slice(0, 10)}  （SL/TP 0.5/0.6，含成本）`);
+
+  const cfg = CFGS[0];
+  const pick = (rows: Row[]) => rows.filter((r) => r.sl === cfg.sl && r.tp === cfg.tp);
+  const modes: [Mode, string][] = [["break", "追突破"], ["retest", "回踩OB"], ["fvg", "回踩FVG"]];
+  for (const [m, label] of modes) {
+    const rows = pick(byMode[m]);
+    console.log(`\n=== 入场：${label}  (n=${rows.length}) ===`);
+    line("全部", rows);
+    line("BOS", rows.filter((r) => r.tag === "BOS"));
+    line("CHoCH", rows.filter((r) => r.tag === "CHoCH"));
+    line("多", rows.filter((r) => r.dir === "long"));
+    line("空", rows.filter((r) => r.dir === "short"));
+    line("亚洲盘", rows.filter((r) => r.session === "亚洲盘"));
+    line("伦敦盘", rows.filter((r) => r.session === "伦敦盘"));
+    line("纽约盘", rows.filter((r) => r.session === "纽约盘"));
+    line("时段外", rows.filter((r) => r.session === "时段外"));
+  }
+  console.log(`\n=== 对照：小周期突破追进（无 1h 过滤）n=${pick(byBase).length} ===`);
+  line("全部", pick(byBase));
+  line("BOS", pick(byBase).filter((r) => r.tag === "BOS"));
+  line("CHoCH", pick(byBase).filter((r) => r.tag === "CHoCH"));
 }
 
-await main();
+await mainAsync();
