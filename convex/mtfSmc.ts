@@ -67,14 +67,17 @@ function buildMessage(
   sigTs: number,
 ): string {
   const dirCn = dir === "bull" ? "看涨" : "看跌";
+  const tfSec = tf === "15m" ? SEC_15M : SEC_5M;
+  const sess = (ts: number, dur: number) =>
+    gate.currentSessionName(ts + dur) ?? "时段间隙";
   return (
     `MTF SMC 入场信号\n\n` +
     `<b>${gate.EXCHANGE_NAME[EXCHANGE]} ${symbol}/USDT</b>\n` +
     `1h ${armedTag} ${dirCn}（关键位 ${gate.fmtPrice(armedLevel)}）\n` +
     `${tf} 同向 ${tag} 确认（关键位 ${gate.fmtPrice(level)}）\n` +
     `入场价：${gate.fmtPrice(entryPrice)}（${tf} 收盘）\n` +
-    `1h 结构：${gate.fmtBeijing(armedTs)} 北京时间\n` +
-    `确认时间：${gate.fmtBeijing(sigTs)} 北京时间\n\n` +
+    `1h 结构：${gate.fmtBeijing(armedTs)} 北京时间（${sess(armedTs, SEC_1H)}）\n` +
+    `确认时间：${gate.fmtBeijing(sigTs)} 北京时间（${sess(sigTs, tfSec)}）\n\n` +
     `<a href="${gate.DASHBOARD_URL}">打开看盘页</a>`
   );
 }
