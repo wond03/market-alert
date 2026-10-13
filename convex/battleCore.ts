@@ -187,35 +187,6 @@ export function buildRisk(
   return { entry, stop, target, rr, stopPct: riskUnit / price };
 }
 
-export function buildChecklist(
-  bias: Bias,
-  htfTag: string,
-  htfLevel: number,
-  zone: Zone,
-  confirm: string,
-  stop: number,
-  rr: number | null,
-  sweepSwept: boolean,
-  sweepLevel: number | null,
-): string {
-  const dirCn = bias === "bull" ? "看涨" : "看跌";
-  const dirWord = bias === "bull" ? "向上" : "向下";
-  const hTag = `高周期 ${HTF.tf}`;
-  const mTag = `中周期 ${MTF.tf}`;
-  const lTag = `低周期 ${LTF.tf}`;
-  const rows = [
-    `✓ [${hTag}] 方向：${dirCn}，低周期与它同向`,
-    `✓ [${hTag}] 结构事件：${htfTag} ${dirWord}破 ${gate.fmtPrice(htfLevel)}，方向已确认`,
-    `✓ [${mTag}] 入区：${zone.kind} ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}（未缓解、未被价格吃掉）`,
-    `✓ [${mTag}] 位移：入区形成后 10 根内出现 ≥1.5×ATR 的同向K线`,
-    `${sweepSwept ? "✓" : "!"} [${hTag}] 流动性：${sweepSwept ? `已扫前${bias === "bull" ? "低" : "高"} ${gate.fmtPrice(sweepLevel!)}，属更高质量背景` : "未扫到前高/前低，属一般背景"}`,
-    `${confirm ? "✓" : "·"} [${lTag}] 确认：${confirm ? confirm + " 出现在区域内" : "暂无（进入入区即提示，非必须）"}`,
-    `✓ [${mTag}] 止损：${gate.fmtPrice(stop)}，在区域外（0.2×ATR 缓冲）`,
-    `${rr != null && rr >= 2 ? "✓" : "!"} [${mTag}] 盈亏比：${rr == null ? "—" : "1:" + rr.toFixed(2)}${rr != null && rr < 2 ? "（低于 1:2，偏薄）" : ""}`,
-  ];
-  return `<b>交易前检查清单</b>\n${rows.join("\n")}\n\n`;
-}
-
 export function buildMessage(
   exchange: string,
   symbol: string,
@@ -239,25 +210,26 @@ export function buildMessage(
   const exName = gate.EXCHANGE_NAME[exchange] ?? exchange;
   const sess = gate.currentSessionName(now) ?? "时段间隙";
   const sep = "━━━━━━━━━━";
+  const liq = sweepSwept
+    ? `已扫前${bias === "bull" ? "低" : "高"} ${gate.fmtPrice(sweepLevel!)}`
+    : "无明显扫荡";
   return (
-    `<b>SMC 作战信号</b> ｜ 进入入区\n\n` +
+    `<b>SMC 作战信号</b> · 进入入区\n` +
     `<b>${exName} · ${symbol}/USDT</b>\n` +
     `${sep}\n` +
-    `方向（高周期 ${HTF.tf}）：<b>${dirCn}</b>\n` +
-    `结构事件：${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
-    `入区（中周期 ${MTF.tf}）：<b>${zone.kind}</b> ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
-    `流动性：${sweepSwept ? `已扫前${bias === "bull" ? "低" : "高"} ${gate.fmtPrice(sweepLevel!)}（更高质量）` : "无明显扫荡"}\n` +
-    `确认（低周期 ${LTF.tf}）：<b>${confirm || "暂无"}</b>\n` +
+    `方向（${HTF.tf}）：<b>${dirCn}</b> ｜ ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
+    `入区（${MTF.tf}）：<b>${zone.kind}</b> ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
+    `流动性：${liq} ｜ 确认（${LTF.tf}）：<b>${confirm || "暂无"}</b>\n` +
     `${sep}\n` +
-    `入场：<b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
-    `止损：<b>${gate.fmtPrice(stop)}</b>（${(stopPct * 100).toFixed(2)}%）\n` +
-    (target === null ? `` : `止盈：<b>${gate.fmtPrice(target)}</b>\n`) +
-    (rr === null ? `` : `盈亏比：<b>1:${rr.toFixed(2)}</b>\n`) +
-    `\n` +
-    buildChecklist(bias, htfTag, htfLevel, zone, confirm, stop, rr, sweepSwept, sweepLevel) +
+    `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
+    `止损 <b>${gate.fmtPrice(stop)}</b>（${(stopPct * 100).toFixed(2)}%）\n` +
+    (target === null
+      ? ``
+      : `止盈 <b>${gate.fmtPrice(target)}</b>` +
+        (rr === null ? `` : `　盈亏比 <b>1:${rr.toFixed(2)}</b>`) +
+        `\n`) +
     `${sep}\n` +
-    `时间：${gate.fmtBeijing(now)} 北京时间（${sess}）\n` +
-    `<a href="${gate.DASHBOARD_URL}">打开看盘页</a>`
+    `${gate.fmtBeijing(now)} 北京（${sess}） ｜ <a href="${gate.DASHBOARD_URL}">看盘页</a>`
   );
 }
 
