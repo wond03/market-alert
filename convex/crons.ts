@@ -12,4 +12,7 @@ crons.interval("smc track", { minutes: 5 }, internal.smc.scan, {});
 // 每分钟运行 MTF SMC：1h 结构 → 5m/15m 同向确认 → 入库 + 推送。
 crons.interval("mtf smc", { minutes: 1 }, internal.mtfSmc.scan, {});
 
+// 每分钟运行作战面板：1h 方向 → 15m OB/FVG 入区 → 5m 确认入场 → 入库 + 推送。
+crons.interval("battle signal", { minutes: 1 }, internal.battle.scan, {});
+
 export default crons;

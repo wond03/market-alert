@@ -9,6 +9,8 @@
  */
 
 import type * as alerts from "../alerts.js";
+import type * as battle from "../battle.js";
+import type * as battleCore from "../battleCore.js";
 import type * as crons from "../crons.js";
 import type * as exchanges from "../exchanges.js";
 import type * as gate from "../gate.js";
@@ -28,6 +30,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
+  battle: typeof battle;
+  battleCore: typeof battleCore;
   crons: typeof crons;
   exchanges: typeof exchanges;
   gate: typeof gate;

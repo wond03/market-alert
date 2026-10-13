@@ -151,26 +151,36 @@
   @media (max-width: 720px) {
     .readout { gap: 1px 12px; padding: 4px 8px 5px; font-size: 10.5px; }
   }
-  /* 盘段统计 (edge-stats) */
-  .stats-form { display: flex; flex-direction: column; gap: 9px; }
-  .stats-form label { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    font-size: 12px; color: var(--muted); }
-  .stats-form select, .stats-form input[type="text"] {
-    background: var(--panel); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 5px 8px; font-size: 12px; min-width: 210px; max-width: 62%; }
-  .stats-headline { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 4px; }
-  .stats-est { font-size: 28px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
-  .stats-est small { font-size: 12px; color: var(--muted); font-weight: 600; }
-  .stats-title { font-size: 12px; color: var(--muted); }
-  .stats-line { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0;
-    border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
-  .stats-line:last-child { border-bottom: 0; }
-  .stats-line b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stats-sec { margin-top: 12px; font-size: 12px; color: var(--muted); }
-  .stats-sec-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
-  .stats-bad { color: #ff6b6b; }
-  .stats-note { margin-top: 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
-  .stats-ok { color: #4caf50; }
+  /* 作战面板辅助 */
+  .bt-note { margin-top: 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
+  .bt-bad { color: #ff6b6b; }
+
+  /* SMC 作战面板 */
+  .modal.battle { width: 660px; }
+  .bt-form { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .bt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+  .bt-form select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 5px 8px; font-size: 12px; }
+  .bt-state { margin-top: 12px; font-size: 13px; font-weight: 700; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); color: var(--text); }
+  .bt-state.bull { color: var(--up); border-color: var(--up); }
+  .bt-state.bear { color: var(--down); border-color: var(--down); }
+  .bt-blk { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+  .bt-blk-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 5px; display: flex; justify-content: space-between; align-items: baseline; }
+  .bt-blk-title .bt-tag { font-weight: 600; color: var(--muted); font-size: 11px; }
+  .bt-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12px; }
+  .bt-row .bt-k { color: var(--muted); }
+  .bt-row .bt-v { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bt-v.up { color: var(--up); } .bt-v.down { color: var(--down); }
+  .bt-zone { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12px; border-bottom: 1px dashed var(--border); }
+  .bt-zone:last-child { border-bottom: 0; }
+  .bt-ztype { font-weight: 700; }
+  .bt-ztype.bull { color: var(--up); } .bt-ztype.bear { color: var(--down); }
+  .bt-badge { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 11px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+  .bt-badge.ok { color: #4caf50; border-color: #4caf50; }
+  .bt-badge.warn { color: #ff6b6b; border-color: #ff6b6b; }
+  .bt-chk { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; font-size: 12px; }
+  .bt-chk .bt-mark { width: 14px; flex: none; text-align: center; font-weight: 700; }
+  .bt-chk.ok .bt-mark { color: #4caf50; } .bt-chk.warn .bt-mark { color: #ffb300; } .bt-chk.na .bt-mark { color: var(--muted); }
+  .bt-chk .bt-q { color: var(--muted); } .bt-chk .bt-a { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body class="notranslate">
@@ -183,7 +193,7 @@
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
     <button class="btn-settings" id="btnAlert">警报设置</button>
-    <button class="btn-settings" id="btnStats">盘段统计</button>
+    <button class="btn-settings" id="btnBattle">作战面板</button>
     <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
   </div>
 </header>
@@ -247,33 +257,25 @@
   </div>
 </div>
 
-<div class="mask" id="statsMask">
-  <div class="modal">
+<div class="mask" id="battleMask">
+  <div class="modal battle">
     <div class="modal-head">
-      <span>盘段统计</span>
+      <span>SMC 作战面板</span>
       <div class="actions">
-        <button id="statsRefresh">刷新</button>
-        <button class="primary" id="statsClose">完成</button>
+        <button id="btRefresh">刷新</button>
+        <button class="primary" id="btClose">完成</button>
       </div>
     </div>
     <div class="modal-body">
-      <div class="stats-form">
-        <label>edge-stats 地址 <input id="stEndpoint" type="text" placeholder="http://localhost:3343"></label>
-        <label>品种 <select id="stSymbol">
-          <option value="BTCUSDT">BTCUSDT</option>
-          <option value="XAUUSD">XAUUSD</option>
-        </select></label>
-        <label>盘段 <select id="stSession">
-          <option value="newyork">纽约盘</option>
-          <option value="london">伦敦盘</option>
-          <option value="tokyo">亚洲盘</option>
-        </select></label>
-        <label>统计项 <select id="stPreset"></select></label>
+      <div class="bt-form">
+        <label>方向周期 <select id="btHtf"><option value="4h">4时</option><option value="1h">1时</option></select></label>
+        <label>区域周期 <select id="btMtf"><option value="1h">1时</option><option value="15m">15分</option><option value="5m">5分</option></select></label>
+        <label>入场周期 <select id="btLtf"><option value="15m">15分</option><option value="5m">5分</option><option value="1m">1分</option></select></label>
       </div>
-      <div id="stResult"><div class="stats-note">加载中…</div></div>
-      <div class="stats-note">
-        条件频率统计（P(结果 | 条件)），含样本量与 95% 置信区间。<b>只描述历史分布，不是信号、不构成建议。</b>
-        需本地运行 <b>edgestats serve</b>。
+      <div id="btResult"><div class="bt-note">加载中…</div></div>
+      <div class="bt-note">
+        按脚本逐步展示当前状态：<b>BOS/CHoCH 定方向 → OB/FVG 找入区 → 低周期确认 → 区域外止损 → 前高前低/流动性止盈</b>。
+        只描述结构与位置，不构成投资建议。
       </div>
     </div>
   </div>
@@ -2135,152 +2137,251 @@
     document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
   }
 
-  /* ================= 盘段统计 (edge-stats) ================= */
-  var ES_KEY = "market-dashboard:edgestats:v1";
-  var ES_SYMBOL = { BTC_USDT: "BTCUSDT", XAU_USDT: "XAUUSD" };
-  var esPresets = null;
-  var esState = esLoad();
-
-  function esLoad() { try { return JSON.parse(localStorage.getItem(ES_KEY)) || {}; } catch (e) { return {}; } }
-  function esSave(o) { try { localStorage.setItem(ES_KEY, JSON.stringify(o)); } catch (e) {} }
-  function esEsc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  /* ================= SMC 作战面板 =================
+     脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 低周期确认 → 区域外止损 → 前高前低/流动性止盈。
+     跨周期取数（方向 / 区域 / 入场），结构判定复用同页 smc* 函数（与 luxSmc 一致）。 */
+  var BT_KEY = "market-dashboard:battle:v1";
+  var btState = btLoad();
+  function btLoad() { try { return JSON.parse(localStorage.getItem(BT_KEY)) || {}; } catch (e) { return {}; } }
+  function btSave(o) { try { localStorage.setItem(BT_KEY, JSON.stringify(o)); } catch (e) {} }
+  function btEsc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function btIvLabel(iv) { return ({ "1m": "1分", "5m": "5分", "15m": "15分", "1h": "1时", "4h": "4时", "1d": "日" })[iv] || iv; }
+  function btFetch(contract, iv, limit) {
+    var ex = EXCHANGES[state.exchange];
+    return ex.fetchCandles(contract, ex.interval(iv), limit).then(function (d) { return sortCandles(d); });
+  }
+  function btEngulf(prev, last, bias) {
+    if (!prev) return false;
+    if (bias === "bull") return last.close > last.open && prev.close < prev.open && last.close >= prev.open && last.open <= prev.close;
+    return last.close < last.open && prev.close > prev.open && last.close <= prev.open && last.open >= prev.close;
+  }
+  function btPin(c, bias) {
+    var rng = c.high - c.low; if (rng <= 0) return false;
+    if (Math.abs(c.close - c.open) > rng * 0.34) return false;
+    if (bias === "bull") return (Math.min(c.close, c.open) - c.low) >= rng * 0.5;
+    return (c.high - Math.max(c.close, c.open)) >= rng * 0.5;
+  }
+  function btHasDisp(candles, z, atrArr) {
+    var end = Math.min(candles.length, z.idx + 10 + 1);
+    for (var k = z.idx; k < end; k++) {
+      var c = candles[k], a = atrArr[k];
+      var dir = z.bias === "bull" ? c.close > c.open : c.close < c.open;
+      if (dir && isFinite(a) && a > 0 && (c.high - c.low) >= 1.5 * a) return true;
+    }
+    return false;
+  }
+  function btSweep(htfRes, candles, bias) {
+    if (bias !== "bull" && bias !== "bear" || !htfRes) return { swept: false, level: null };
+    var arr = bias === "bull" ? htfRes.lows : htfRes.highs;
+    var n = candles.length, from = Math.max(0, n - 20);
+    for (var i = from; i < n; i++) {
+      var c = candles[i];
+      for (var j = 0; j < arr.length; j++) {
+        var p = arr[j];
+        if (p.idx >= i) continue;
+        if (bias === "bull") { if (c.low < p.price && c.close > p.price) return { swept: true, level: p.price }; }
+        else if (c.high > p.price && c.close < p.price) return { swept: true, level: p.price };
+      }
+    }
+    return { swept: false, level: null };
+  }
+  function btZoneSet(candles, bias) {
+    var swing = smcRunStructure(candles, 50, "atr");
+    var internal = smcRunStructure(candles, 5, "atr");
+    var atrArr = smcAtr(candles, SMC_ATR_LEN);
+    var zones = [];
+    swing.orderBlocks.concat(internal.orderBlocks).forEach(function (o) {
+      if (o.mitigatedIdx === null && o.bias === bias) zones.push({ kind: "OB", bias: bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
     });
+    smcFvgs(candles).forEach(function (f) {
+      if (f.mitigatedIdx === null && f.dir === bias) zones.push({ kind: "FVG", bias: bias, top: f.top, bottom: f.bottom, idx: f.idx, t: f.t });
+    });
+    var seen = {};
+    zones = zones.filter(function (z) {
+      if (!btHasDisp(candles, z, atrArr)) return false;
+      var k = z.kind + "#" + z.idx + "#" + z.bottom + "#" + z.top;
+      if (seen[k]) return false; seen[k] = 1; return true;
+    });
+    zones.forEach(function (z) {
+      var tc = 0;
+      for (var k = z.idx + 1; k < candles.length; k++) {
+        if (candles[k].low <= z.top && candles[k].high >= z.bottom) tc++;
+      }
+      z.touched = tc;
+      z.fresh = tc === 0;
+      z.overlap = zones.some(function (o) { return o !== z && o.kind !== z.kind && o.bottom <= z.top && o.top >= z.bottom; });
+    });
+    return zones;
   }
-  function esPct(x) { return x == null ? "--" : (x * 100).toFixed(1) + "%"; }
-  function defaultEdgeEndpoint() {
-    var h = location.hostname || "localhost";
-    var m = /^(\d+)-(.+)$/.exec(h);
-    if (m && /\.monkeycode-ai\.online$/.test(h)) return location.protocol + "//3343-" + m[2];
-    return "http://" + h + ":3343";
+  function btTrigger(ltf, bias, zones, price, atrVal) {
+    if (bias !== "bull" && bias !== "bear") return { state: "高周期无明确方向", tone: "", inZone: null, confirmed: false, kind: "" };
+    var buf = 0.15 * atrVal, inZone = null;
+    zones.forEach(function (z) {
+      if (price >= z.bottom - buf && price <= z.top + buf) {
+        if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
+      }
+    });
+    var lres = smcRunStructure(ltf, 5, "atr");
+    var lb = lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null;
+    var recentBreak = lb && lb.dir === bias && (ltf.length - 1 - lb.idx) <= 3;
+    var last = ltf[ltf.length - 1], prev = ltf[ltf.length - 2];
+    var eng = btEngulf(prev, last, bias), pin = btPin(last, bias);
+    var confirmed = recentBreak || eng || pin;
+    var kind = recentBreak ? (lb.tag + (lb.dir === "bull" ? "向上" : "向下")) : (eng ? "吞没" : (pin ? "Pin Bar" : ""));
+    var state;
+    if (inZone) state = confirmed ? "已到区域 + 低周期确认（" + kind + "）" : "已到区域，等待低周期确认";
+    else state = "价格未到入区，等待回踩";
+    return { state: state, tone: (confirmed && inZone) ? bias : "", inZone: inZone, confirmed: !!confirmed, kind: kind, ltfBreak: lb };
   }
-  function edgeSymbol() {
-    var inst = INSTRUMENTS[state.activeInst];
-    return (inst && ES_SYMBOL[inst.sym.gate]) || "BTCUSDT";
+  function btOppLiquidity(htfRes, price, dir) {
+    var arr = dir === "up" ? htfRes.highs : htfRes.lows, best = null;
+    arr.forEach(function (p) {
+      var lv = p.price;
+      if (dir === "up") { if (lv > price && (best === null || lv < best)) best = lv; }
+      else { if (lv < price && (best === null || lv > best)) best = lv; }
+    });
+    return best;
   }
-  function esEndpoint() { return document.getElementById("stEndpoint").value.trim().replace(/\/+$/, ""); }
-
-  function esLoadPresets(force) {
-    var ep = esEndpoint();
-    if (esPresets && esPresets.ep === ep && !force) return Promise.resolve(esPresets.list);
-    return fetch(ep + "/api/presets").then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    }).then(function (j) {
-      var list = (j.presets || []).map(function (p) { return { id: p.id, title: p.title }; })
-        .sort(function (a, b) { return a.title.localeCompare(b.title); });
-      esPresets = { ep: ep, list: list };
-      var sel = document.getElementById("stPreset");
-      var cur = sel.value || esState.preset;
-      sel.innerHTML = "";
-      list.forEach(function (p) {
-        var o = document.createElement("option"); o.value = p.id; o.textContent = p.title; sel.appendChild(o);
+  function btRisk(bias, zone, htfRes, price, atrVal) {
+    if (!zone || (bias !== "bull" && bias !== "bear")) return null;
+    var buf = 0.2 * atrVal, entry, stop, target, dir;
+    if (bias === "bull") { dir = "up"; entry = zone.top; stop = zone.bottom - buf; target = btOppLiquidity(htfRes, price, "up"); }
+    else { dir = "down"; entry = zone.bottom; stop = zone.top + buf; target = btOppLiquidity(htfRes, price, "down"); }
+    var reward = target == null ? null : Math.abs(target - entry);
+    var riskUnit = Math.abs(entry - stop);
+    var rr = (reward == null || riskUnit <= 0) ? null : reward / riskUnit;
+    return { entry: entry, stop: stop, target: target, rr: rr, stopPct: riskUnit / price };
+  }
+  function btCompute(htf, mtf, ltf, htfIv, mtfIv, ltfIv, label) {
+    var price = ltf[ltf.length - 1].close;
+    var htfRes = smcRunStructure(htf, 50, "atr");
+    var bias = htfRes.trendAtEnd;
+    var lastBreak = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
+    var atrVal = smcAtr(ltf, 14)[ltf.length - 1] || (price * 0.002);
+    var zones = [];
+    if (bias === "bull" || bias === "bear") {
+      zones = btZoneSet(mtf, bias);
+      zones.forEach(function (z) {
+        z.dist = (z.bottom > price) ? (z.bottom - price) : (z.top < price ? (price - z.top) : 0);
+        z.side = (z.bottom > price) ? "上" : (z.top < price ? "下" : "内");
       });
-      if (cur && list.some(function (p) { return p.id === cur; })) sel.value = cur;
-      return list;
-    });
-  }
-
-  function renderStatsError(msg) {
-    document.getElementById("stResult").innerHTML =
-      '<div class="stats-note stats-bad">' + esEsc(msg) + "</div>";
-  }
-
-  function renderStats(r) {
-    var el = document.getElementById("stResult");
-    function line(k, v) {
-      return '<div class="stats-line"><span>' + esEsc(k) + "</span><b>" + esEsc(v) + "</b></div>";
+      zones.sort(function (a, b) { return a.dist - b.dist; });
     }
+    var trig = btTrigger(ltf, bias, zones, price, atrVal);
+    var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal);
+    var trail = smcTrailing(htf, 50);
+    var sweep = btSweep(htfRes, htf, bias);
+    return { label: label, price: price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
+      bias: bias, htfRes: htfRes, lastBreak: lastBreak, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
+  }
+  function renderBattle(x) {
+    var el = document.getElementById("btResult"), dp = priceDp(x.price);
+    function f(n) { return fmt(n, dp); }
+    function row(k, v, tone) { return '<div class="bt-row"><span class="bt-k">' + btEsc(k) + '</span><span class="bt-v' + (tone ? " " + tone : "") + '">' + btEsc(v) + '</span></div>'; }
+    var up = x.bias === "bull", dn = x.bias === "bear";
     var out = [];
-    if (r.query && r.query.dsl) out.push('<div class="stats-title">' + esEsc(r.query.dsl) + "</div>");
-    out.push('<div class="stats-headline"><span class="stats-est">' + esPct(r.estimate) + "</span>" +
-      '<span class="stats-title">N=' + (r.n || 0) + " · 95% CI " +
-      (r.ci95 ? "[" + esPct(r.ci95[0]) + ", " + esPct(r.ci95[1]) + "]" : "--") +
-      (r.successes != null ? " · 命中 " + r.successes : "") + "</span></div>");
-    if (r.guards && r.guards.lowSample) out.push('<div class="stats-note stats-bad">样本偏少，估计不稳定</div>');
-    if (r.stability) out.push(line("前后半段一致",
-      (r.stability.agree ? "是" : "否") + "（" + esPct(r.stability.firstHalf.estimate) + " vs " + esPct(r.stability.secondHalf.estimate) + "）"));
-    if (r.recency) out.push(line("最近 " + r.recency.window + " 期",
-      esPct(r.recency.estimate) + "（n=" + r.recency.n + "）" + (r.recency.diverges ? " · 与全历史背离" : "")));
-    if (r.perYear && r.perYear.length) {
-      out.push('<div class="stats-sec"><div class="stats-sec-title">分年</div>' +
-        r.perYear.map(function (y) { return line(String(y.year), esPct(y.estimate) + "（n=" + y.n + "）"); }).join("") + "</div>");
-    }
-    if (r.groups && r.groups.length) {
-      out.push('<div class="stats-sec"><div class="stats-sec-title">分组</div>' +
-        r.groups.map(function (g) { return line(g.group, esPct(g.estimate) + "（n=" + g.n + "）"); }).join("") + "</div>");
-    }
-    out.push('<div class="stats-note">' + esEsc(r.disclaimer || "历史条件频率，非预测、非建议。") + "</div>");
+    var bl = x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level)) : "—";
+    out.push('<div class="bt-state ' + (up ? "bull" : dn ? "bear" : "") + '">' +
+      (up || dn ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (up ? "看涨" : "看跌") : "高周期（" + btIvLabel(x.htfIv) + "）结构：震荡 / 无明确方向") + "</div>");
+
+    var legLv = up ? (x.htfRes.lows.length ? x.htfRes.lows[x.htfRes.lows.length - 1].price : null)
+      : (x.htfRes.highs.length ? x.htfRes.highs[x.htfRes.highs.length - 1].price : null);
+    var pct = (isFinite(x.trail.top) && isFinite(x.trail.bottom) && x.trail.top > x.trail.bottom) ? (x.price - x.trail.bottom) / (x.trail.top - x.trail.bottom) : null;
+    out.push('<div class="bt-blk"><div class="bt-blk-title">结构方向 <span class="bt-tag">BOS / CHoCH</span></div>' +
+      row("方向周期", btIvLabel(x.htfIv)) +
+      row("最近结构事件", bl, x.lastBreak ? (x.lastBreak.dir === "bull" ? "up" : "down") : "") +
+      row("失效线（结构腿" + (up ? "低" : "高") + "）", legLv == null ? "—" : f(legLv)) +
+      (pct != null ? row("区间位置", (pct > 0.55 ? "溢价" : pct < 0.45 ? "折价" : "均衡") + " " + Math.round(pct * 100) + "%") : "") +
+      ((up || dn) ? row("流动性背景", x.sweep.swept ? ("已扫前" + (up ? "低" : "高") + " " + f(x.sweep.level) + "（更高质量）") : "无明显扫荡", x.sweep.swept ? "up" : "") : "") +
+      "</div>");
+
+    var zHtml = "";
+    if (!x.zones.length) zHtml = '<div class="bt-note" style="margin-top:0">无顺方向、未缓解且带位移的 OB / FVG 区域。</div>';
+    x.zones.forEach(function (z) {
+      var distPct = (z.dist / x.price * 100).toFixed(2);
+      zHtml += '<div class="bt-zone"><span><span class="bt-ztype ' + z.bias + '">' + z.kind + "</span> " + z.side + " " + f(z.bottom) + "–" + f(z.top) +
+        (z.fresh ? '<span class="bt-badge ok">新鲜</span>' : '<span class="bt-badge warn">已测试 ' + z.touched + "</span>") +
+        (z.overlap ? '<span class="bt-badge">OB/FVG 重叠</span>' : "") +
+        '</span><span class="bt-v">距现价 ' + distPct + "%</span></div>";
+    });
+    out.push('<div class="bt-blk"><div class="bt-blk-title">入区（OB / FVG） <span class="bt-tag">' + btIvLabel(x.mtfIv) + '</span></div>' + zHtml + "</div>");
+
+    out.push('<div class="bt-blk"><div class="bt-blk-title">低周期确认 <span class="bt-tag">' + btIvLabel(x.ltfIv) + '</span></div>' +
+      row("当前状态", x.trig.state, x.trig.tone) +
+      row("低周期最近结构", x.trig.ltfBreak ? (x.trig.ltfBreak.tag + " " + (x.trig.ltfBreak.dir === "bull" ? "上" : "下")) : "—") +
+      row("确认信号", x.trig.confirmed ? ("有（" + x.trig.kind + "）") : "无（等 CHoCH / BOS / 吞没 / Pin）") +
+      "</div>");
+
+    var r = x.risk;
+    out.push('<div class="bt-blk"><div class="bt-blk-title">风控执行 <span class="bt-tag">' + (up ? "做多剧本" : dn ? "做空剧本" : "—") + '</span></div>' +
+      (r ? row("入场", f(r.entry)) +
+        row("止损（区域外）", f(r.stop) + "（" + (r.stopPct * 100).toFixed(2) + "%）") +
+        row("止盈（前高前低/流动性）", r.target == null ? "—" : f(r.target)) +
+        row("盈亏比", r.rr == null ? "—" : "1:" + r.rr.toFixed(2), r.rr != null && r.rr >= 2 ? "up" : "down")
+        : '<div class="bt-note" style="margin-top:0">无可用区域，暂不给执行参数。</div>') +
+      "</div>");
+
+    var chk = [];
+    function ck(ok, q, a) { chk.push('<div class="bt-chk ' + (ok === true ? "ok" : ok === false ? "warn" : "na") + '"><span class="bt-mark">' + (ok === true ? "✓" : ok === false ? "!" : "·") + '</span><span><span class="bt-q">' + btEsc(q) + '</span> <span class="bt-a">' + btEsc(a) + "</span></span></div>"); }
+    ck(up || dn, "方向：高周期趋势是什么？", up ? "看涨" : dn ? "看跌" : "震荡");
+    ck(!!x.lastBreak, "最近结构事件", x.lastBreak ? x.lastBreak.tag : "—");
+    ck(up || dn, "方向一致（顺高周期）", up || dn ? "是" : "否");
+    ck(x.zones.length > 0, "POI 类型", x.zones.length ? (x.zones[0].kind + (x.zones[0].overlap ? "＋重叠" : "")) : "无");
+    ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜", x.zones.length ? (x.zones[0].fresh ? "是（未测试）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
+    ck(x.zones.length > 0, "区域是否有位移支撑", x.zones.length ? "是（已过滤）" : "—");
+    ck((up || dn) ? x.sweep.swept : null, "流动性扫荡（更高质量背景）", (up || dn) ? (x.sweep.swept ? "已扫" : "无") : "—");
+    ck(x.trig.confirmed === true, "低周期确认信号", x.trig.confirmed ? x.trig.kind : "暂无");
+    ck(r ? true : null, "止损位置明确", r ? f(r.stop) : "—");
+    ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比 ≥ 1:2", r && r.rr != null ? "1:" + r.rr.toFixed(2) : "—");
+    ck(null, "仓位风险可控", "建议单笔 0.5–2%");
+    ck(null, "新闻 / 数据风险", "自行核对");
+    ck(null, "错了是否接受这笔亏损", "自行确认");
+    out.push('<div class="bt-blk"><div class="bt-blk-title">交易前检查清单</div>' + chk.join("") + "</div>");
+
     el.innerHTML = out.join("");
   }
-
-  function runStats() {
-    var ep = esEndpoint();
-    var presetId = document.getElementById("stPreset").value;
-    if (!presetId) return;
-    var symbol = document.getElementById("stSymbol").value;
-    var session = document.getElementById("stSession").value;
-    esState = { endpoint: ep, symbol: symbol, session: session, preset: presetId };
-    esSave(esState);
-    document.getElementById("stResult").innerHTML = '<div class="stats-note">查询中…</div>';
-    fetch(ep + "/api/preset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ presetId: presetId, symbol: symbol, sessionKey: session })
-    }).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, j: j }; });
-    }).then(function (x) {
-      if (!x.ok || x.j.error) renderStatsError(x.j.error || "请求失败");
-      else renderStats(x.j);
+  function runBattle() {
+    var htfIv = document.getElementById("btHtf").value;
+    var mtfIv = document.getElementById("btMtf").value;
+    var ltfIv = document.getElementById("btLtf").value;
+    btState = { htf: htfIv, mtf: mtfIv, ltf: ltfIv };
+    btSave(btState);
+    var inst = INSTRUMENTS[state.activeInst];
+    var contract = inst.sym[state.exchange];
+    var el = document.getElementById("btResult");
+    el.innerHTML = '<div class="bt-note">加载中…</div>';
+    Promise.all([
+      btFetch(contract, htfIv, 500),
+      btFetch(contract, mtfIv, 500),
+      btFetch(contract, ltfIv, 500)
+    ]).then(function (arr) {
+      if (arr[0].length < 60 || arr[1].length < 60 || arr[2].length < 30) { el.innerHTML = '<div class="bt-note bt-bad">K 线数据不足，无法计算。</div>'; return; }
+      renderBattle(btCompute(arr[0], arr[1], arr[2], htfIv, mtfIv, ltfIv, inst.label));
     }).catch(function (e) {
-      renderStatsError("无法连接 edge-stats（" + ep + "）：" + e.message);
+      el.innerHTML = '<div class="bt-note bt-bad">加载失败：' + btEsc(e.message) + "</div>";
     });
   }
-
-  function openStats() {
-    document.getElementById("stEndpoint").value = esState.endpoint || defaultEdgeEndpoint();
-    document.getElementById("stSymbol").value = edgeSymbol();
-    document.getElementById("stSession").value = esState.session || "newyork";
-    document.getElementById("statsMask").classList.add("show");
-    document.getElementById("stResult").innerHTML = '<div class="stats-note">连接中…</div>';
-    esLoadPresets(false).then(function (list) {
-      if (!list.length) { renderStatsError("没有可用的统计项。请确认本地已运行 edgestats serve 且地址正确。"); return; }
-      var sel = document.getElementById("stPreset");
-      if (esState.preset && list.some(function (p) { return p.id === esState.preset; })) sel.value = esState.preset;
-      if (!sel.value && list.length) sel.value = list[0].id;
-      runStats();
-    }).catch(function (e) {
-      renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message);
-    });
+  function openBattle() {
+    document.getElementById("btHtf").value = btState.htf || "1h";
+    document.getElementById("btMtf").value = btState.mtf || "15m";
+    document.getElementById("btLtf").value = btState.ltf || "5m";
+    document.getElementById("battleMask").classList.add("show");
+    runBattle();
   }
-
-  function wireStatsUI() {
-    document.getElementById("btnStats").addEventListener("click", openStats);
-    document.getElementById("statsClose").addEventListener("click", function () {
-      document.getElementById("statsMask").classList.remove("show");
-    });
-    document.getElementById("statsMask").addEventListener("click", function (e) {
-      if (e.target.id === "statsMask") document.getElementById("statsMask").classList.remove("show");
-    });
-    document.getElementById("statsRefresh").addEventListener("click", function () {
-      esLoadPresets(true).then(function (l) { if (l.length) runStats(); })
-        .catch(function (e) { renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message); });
-    });
-    document.getElementById("stEndpoint").addEventListener("change", function () {
-      esState.endpoint = esEndpoint(); esSave(esState); esPresets = null;
-      esLoadPresets(true).then(function (l) { if (l.length) runStats(); })
-        .catch(function (e) { renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message); });
-    });
-    document.getElementById("stSymbol").addEventListener("change", runStats);
-    document.getElementById("stSession").addEventListener("change", runStats);
-    document.getElementById("stPreset").addEventListener("change", runStats);
+  function wireBattleUI() {
+    document.getElementById("btnBattle").addEventListener("click", openBattle);
+    document.getElementById("btClose").addEventListener("click", function () { document.getElementById("battleMask").classList.remove("show"); });
+    document.getElementById("battleMask").addEventListener("click", function (e) { if (e.target.id === "battleMask") document.getElementById("battleMask").classList.remove("show"); });
+    document.getElementById("btRefresh").addEventListener("click", runBattle);
+    document.getElementById("btHtf").addEventListener("change", runBattle);
+    document.getElementById("btMtf").addEventListener("change", runBattle);
+    document.getElementById("btLtf").addEventListener("change", runBattle);
   }
 
   window.addEventListener("beforeunload", captureViewBars);
   window.__md = { get charts() { return charts; }, state: state, getViewBars: function () { return viewBars; } };
   wireAlertUI();
-  wireStatsUI();
+  wireBattleUI();
   buildToolbar();
   buildTabs();
   buildPanels();

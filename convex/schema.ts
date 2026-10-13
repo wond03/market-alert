@@ -90,9 +90,37 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_sigTs", ["sigTs"]),
 
-  // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
-  smcSignals: defineTable({
+  // 作战面板：每个 (交易所:标的) 的布防状态（记录已推送过的区域，离开后重进再推）
+  battleState: defineTable({
+    key: v.string(),
+    firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // 作战面板：低周期确认入场的信号（记录 + 推送）
+  battleSignals: defineTable({
     exchange: v.string(),
+    symbol: v.string(),
+    bias: v.string(), // long | short
+    htfTag: v.string(), // 1h 突破类型：BOS | CHoCH
+    htfLevel: v.number(),
+    zoneKind: v.string(), // OB | FVG
+    zoneTop: v.number(),
+    zoneBottom: v.number(),
+    confirm: v.string(), // 低周期确认：CHoCH/BOS 向上/向下 | 吞没 | Pin Bar
+    entryPrice: v.number(),
+    stopPrice: v.number(),
+    targetPrice: v.union(v.number(), v.null()),
+    rr: v.union(v.number(), v.null()),
+    sweep: v.optional(v.boolean()), // 是否在 HTF 上先出现流动性扫荡（更高质量）
+    sweepLevel: v.optional(v.union(v.number(), v.null())),
+    sigTs: v.number(), // 确认所在 5m K 线时间
+    text: v.string(),
+    createdAt: v.number(),
+  }).index("by_sigTs", ["sigTs"]),
+
+  // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
+  smcSignals: defineTable({    exchange: v.string(),
     symbol: v.string(),
     sigTs: v.number(),
     session: v.string(), // 亚洲盘 | 伦敦盘 | 纽约盘（仅记录三大时段内的信号）
