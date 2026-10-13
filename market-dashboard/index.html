@@ -139,6 +139,18 @@
   .alert-msg { font-size: 12px; margin-left: 6px; }
   .alert-msg.err { color: #ff6b6b; }
   .alert-msg.ok { color: #4caf50; }
+  /* 盘面读数 */
+  .readout { flex: none; display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 5px 12px 6px;
+    border-bottom: 1px solid var(--border); font-size: 11px; line-height: 1.55; }
+  .readout:empty { display: none; }
+  .ro-item { display: flex; gap: 5px; white-space: nowrap; }
+  .ro-k { color: var(--muted); }
+  .ro-v { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ro-v.up { color: var(--up); }
+  .ro-v.down { color: var(--down); }
+  @media (max-width: 720px) {
+    .readout { gap: 1px 12px; padding: 4px 8px 5px; font-size: 10.5px; }
+  }
 </style>
 </head>
 <body class="notranslate">
@@ -994,6 +1006,141 @@
     return { top: top, bottom: bottom, topIdx: topIdx, bottomIdx: bottomIdx };
   }
 
+  /* ================= 盘面读数（只描述状态，不做买卖判断） ================= */
+  function roEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
+    });
+  }
+  function roFmtPct(x) { return (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%"; }
+  function roReadParams() {
+    var p = (active.smc && active.smc.params) || {};
+    var swing = parseInt(p.swingLen, 10); if (!isFinite(swing) || swing < 2) swing = 50;
+    var internal = parseInt(p.internalLen, 10); if (!isFinite(internal) || internal < 2) internal = 5;
+    return { swing: swing, internal: internal };
+  }
+  function roStructRow(d, label, res) {
+    var tlab = res.trendAtEnd === "bull" ? "看涨" : (res.trendAtEnd === "bear" ? "看跌" : "震荡");
+    var tone = res.trendAtEnd === "bull" ? "up" : (res.trendAtEnd === "bear" ? "down" : "");
+    var extra = "";
+    var bs = res.breaks;
+    if (bs.length) {
+      var b = bs[bs.length - 1], ago = d.length - 1 - b.idx;
+      extra = "  " + b.tag + " " + (b.dir === "bull" ? "向上" : "向下") + "破 " + bjTimeFmt(d[b.idx].time);
+      if (ago > 0) extra += "（" + ago + "根前）";
+    }
+    return { k: label, v: tlab + extra, tone: tone };
+  }
+  function roNearestSwing(res, price, dir) {
+    var arr = dir === "up" ? res.highs : res.lows, best = null;
+    for (var i = 0; i < arr.length; i++) {
+      var lv = arr[i].price;
+      if (dir === "up") { if (lv > price && (best === null || lv < best)) best = lv; }
+      else { if (lv < price && (best === null || lv > best)) best = lv; }
+    }
+    return best;
+  }
+  function roSessionRuns(entry) {
+    if (state.interval === "1d") return null;
+    var p = active.sessions && active.sessions.params;
+    if (!p) return null;
+    var sessions = readSessions(p);
+    if (!sessions.length) return null;
+    var d = entry.data, runs = [];
+    sessions.forEach(function (se) {
+      var mins = tzMinutesFor(entry, se.tz), cur = null;
+      for (var i = 0; i < d.length; i++) {
+        if (inWindow(mins[i], se.start, se.end)) {
+          if (!cur) cur = { name: se.name, i0: i, i1: i };
+          else cur.i1 = i;
+        } else if (cur) { runs.push(cur); cur = null; }
+      }
+      if (cur) runs.push(cur);
+    });
+    if (!runs.length) return null;
+    runs.sort(function (a, b) { return a.i0 - b.i0; });
+    runs.forEach(function (r) {
+      var hh = -Infinity, ll = Infinity;
+      for (var k = r.i0; k <= r.i1; k++) { if (d[k].high > hh) hh = d[k].high; if (d[k].low < ll) ll = d[k].low; }
+      r.high = hh; r.low = ll;
+    });
+    return runs;
+  }
+
+  function computeReadout(entry) {
+    var d = entry.data;
+    if (!d || d.length < 10) return null;
+    var price = d[d.length - 1].close, dp = priceDp(price);
+    var P = roReadParams();
+    var rows = [];
+
+    var swRes = smcRunStructure(d, P.swing, "atr");
+    var inRes = smcRunStructure(d, P.internal, "atr");
+    rows.push(roStructRow(d, "摆动结构(" + P.swing + ")", swRes));
+    rows.push(roStructRow(d, "内部结构(" + P.internal + ")", inRes));
+
+    var tr = smcTrailing(d, P.swing);
+    if (isFinite(tr.top) && isFinite(tr.bottom) && tr.top > tr.bottom) {
+      var pct = (price - tr.bottom) / (tr.top - tr.bottom);
+      var zone = pct > 0.55 ? "溢价" : (pct < 0.45 ? "折价" : "均衡");
+      var ztone = pct > 0.55 ? "down" : (pct < 0.45 ? "up" : "");
+      rows.push({ k: "区间位置", v: zone + " " + Math.round(pct * 100) + "%（下 " + fmt(tr.bottom, dp) + " / 上 " + fmt(tr.top, dp) + "）", tone: ztone });
+    }
+
+    var upLv = roNearestSwing(swRes, price, "up"), dnLv = roNearestSwing(swRes, price, "down");
+    rows.push({ k: "上方流动性", v: upLv === null ? "—" : fmt(upLv, dp) + "（" + roFmtPct((upLv - price) / price) + "）", tone: "down" });
+    rows.push({ k: "下方流动性", v: dnLv === null ? "—" : fmt(dnLv, dp) + "（" + roFmtPct((dnLv - price) / price) + "）", tone: "up" });
+
+    var fvgs = smcFvgs(d).filter(function (f) { return f.mitigatedIdx === null; });
+    var fUp = null, fDn = null;
+    fvgs.forEach(function (f) {
+      if (f.bottom >= price && (fUp === null || f.bottom < fUp)) fUp = f.bottom;
+      if (f.top <= price && (fDn === null || f.top > fDn)) fDn = f.top;
+    });
+    rows.push({ k: "未填 FVG", v: fvgs.length + " 个（上方最近 " + (fUp === null ? "—" : fmt(fUp, dp)) + " / 下方最近 " + (fDn === null ? "—" : fmt(fDn, dp)) + "）", tone: "" });
+
+    var obs = swRes.orderBlocks.filter(function (o) { return o.mitigatedIdx === null; });
+    var obUp = null, obDn = null;
+    obs.forEach(function (o) {
+      if (o.low >= price && (obUp === null || o.low < obUp)) obUp = o.low;
+      if (o.high <= price && (obDn === null || o.high > obDn)) obDn = o.high;
+    });
+    rows.push({ k: "订单块", v: obs.length + " 个（上方最近 " + (obUp === null ? "—" : fmt(obUp, dp)) + " / 下方最近 " + (obDn === null ? "—" : fmt(obDn, dp)) + "）", tone: "" });
+
+    var runs = roSessionRuns(entry);
+    if (runs) {
+      var li = d.length - 1, cur = null;
+      for (var i = runs.length - 1; i >= 0; i--) { if (runs[i].i0 <= li && runs[i].i1 >= li) { cur = runs[i]; break; } }
+      if (cur) {
+        rows.push({ k: "当前盘段", v: cur.name + " · 高 " + fmt(cur.high, dp) + " / 低 " + fmt(cur.low, dp), tone: "" });
+        var idx = runs.indexOf(cur);
+        if (idx > 0) {
+          var prev = runs[idx - 1], swept = [];
+          if (cur.high > prev.high) swept.push("上方(" + prev.name + "高)");
+          if (cur.low < prev.low) swept.push("下方(" + prev.name + "低)");
+          rows.push({ k: "盘段互动", v: swept.length ? "已扫 " + swept.join("、") : "未破上一盘段高低", tone: swept.length ? "down" : "" });
+        }
+      } else {
+        rows.push({ k: "当前盘段", v: "盘间（不在任何时段内）", tone: "" });
+      }
+    }
+    return rows;
+  }
+
+  function renderReadout(entry) {
+    var el = entry.readoutEl;
+    if (!el) return;
+    var rows = null;
+    try { rows = computeReadout(entry); } catch (e) { rows = null; }
+    if (!rows || !rows.length) { el.innerHTML = ""; return; }
+    var html = "";
+    rows.forEach(function (r) {
+      var tone = r.tone ? " " + r.tone : "";
+      html += '<div class="ro-item"><span class="ro-k">' + roEsc(r.k) + '</span><span class="ro-v' + tone + '">' + roEsc(r.v) + '</span></div>';
+    });
+    el.innerHTML = html;
+  }
+
   function drawSMC(entry) {
     var el = entry.smcEl;
     if (!el) return;
@@ -1269,6 +1416,7 @@
     applyIndicatorData(entry);
     if (range) { try { entry.mainChart.timeScale().setVisibleLogicalRange(range); } catch (e) {} }
     redrawOverlays(entry);
+    renderReadout(entry);
   }
 
   function applyIndicatorData(entry) {
@@ -1354,6 +1502,7 @@
       applyIndicatorData(entry);
       applyView(entry);
       redrawOverlays(entry);
+      renderReadout(entry);
     });
   }
 
@@ -1406,6 +1555,7 @@
     entry.candles.update(candle);
     applyIndicatorData(entry);
     redrawOverlays(entry);
+    renderReadout(entry);
   }
 
   function onWsMessage(raw) {
@@ -1670,6 +1820,7 @@
             '<span>指数<b data-role="idx">--</b></span>' +
           '</span>' +
         '</div>' +
+        '<div class="readout" data-role="readout"></div>' +
         '<div class="main-wrap">' +
           '<div class="sessions-overlay" data-role="sessions"></div>' +
           '<div class="sessions-overlay" data-role="smc"></div>' +
@@ -1698,7 +1849,8 @@
       var entry = {
         inst: inst, panel: panel, data: [], mainChart: mc, candles: candles,
         subContainer: subEl, mainOverlays: [], subPanes: [], autoScale: true, logScale: false,
-        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow
+        mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow,
+        readoutEl: panel.querySelector('[data-role="readout"]')
       };
       mc.timeScale().subscribeVisibleLogicalRangeChange(function () { redrawOverlays(entry); updateNowBtn(entry); });
       btnNow.addEventListener("click", function () { try { mc.timeScale().scrollToRealTime(); } catch (e) {} updateNowBtn(entry); });
