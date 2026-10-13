@@ -2323,19 +2323,15 @@
 
     var chk = [];
     function ck(ok, q, a) { chk.push('<div class="bt-chk ' + (ok === true ? "ok" : ok === false ? "warn" : "na") + '"><span class="bt-mark">' + (ok === true ? "✓" : ok === false ? "!" : "·") + '</span><span><span class="bt-q">' + btEsc(q) + '</span> <span class="bt-a">' + btEsc(a) + "</span></span></div>"); }
-    ck(up || dn, "方向：高周期趋势是什么？", up ? "看涨" : dn ? "看跌" : "震荡");
-    ck(!!x.lastBreak, "最近结构事件", x.lastBreak ? x.lastBreak.tag : "—");
-    ck(up || dn, "方向一致（顺高周期）", up || dn ? "是" : "否");
-    ck(x.zones.length > 0, "POI 类型", x.zones.length ? (x.zones[0].kind + (x.zones[0].overlap ? "＋重叠" : "")) : "无");
-    ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜", x.zones.length ? (x.zones[0].fresh ? "是（未测试）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
-    ck(x.zones.length > 0, "区域是否有位移支撑", x.zones.length ? "是（已过滤）" : "—");
-    ck((up || dn) ? x.sweep.swept : null, "流动性扫荡（更高质量背景）", (up || dn) ? (x.sweep.swept ? "已扫" : "无") : "—");
-    ck(x.trig.confirmed === true, "低周期确认信号", x.trig.confirmed ? x.trig.kind : "暂无");
-    ck(r ? true : null, "止损位置明确", r ? f(r.stop) : "—");
-    ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比 ≥ 1:2", r && r.rr != null ? "1:" + r.rr.toFixed(2) : "—");
-    ck(null, "仓位风险可控", "建议单笔 0.5–2%");
-    ck(null, "新闻 / 数据风险", "自行核对");
-    ck(null, "错了是否接受这笔亏损", "自行确认");
+    ck(up || dn, "方向（高周期 " + btIvLabel(x.htfIv) + "）", up ? "看涨，低周期与它同向" : dn ? "看跌，低周期与它同向" : "震荡，无明确方向");
+    ck(!!x.lastBreak, "结构事件（高周期 " + btIvLabel(x.htfIv) + "）", x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level) + "，方向已确认") : "—");
+    ck(x.zones.length > 0, "入区（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].kind + " " + f(x.zones[0].bottom) + "–" + f(x.zones[0].top) + "（未缓解、未被价格吃掉" + (x.zones[0].overlap ? "，与另一类重叠" : "") + "）") : "无");
+    ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].fresh ? "是（未被测试过）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
+    ck(x.zones.length > 0, "位移支撑（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? "有（入区形成后 10 根内出现 ≥1.5×ATR 的同向K线）" : "—");
+    ck((up || dn) ? x.sweep.swept : null, "流动性（高周期 " + btIvLabel(x.htfIv) + "）", (up || dn) ? (x.sweep.swept ? ("已扫前" + (up ? "低" : "高") + " " + f(x.sweep.level) + "，属更高质量背景") : "未扫到前高/前低，属一般背景") : "—");
+    ck(x.trig.confirmed === true, "低周期确认（" + btIvLabel(x.ltfIv) + "）", x.trig.confirmed ? (x.trig.kind + "，出现在区域内") : "暂无");
+    ck(r ? true : null, "止损（中周期 " + btIvLabel(x.mtfIv) + "）", r ? (f(r.stop) + "，在区域外（0.2×ATR 缓冲）") : "—");
+    ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比（中周期 " + btIvLabel(x.mtfIv) + "）", r && r.rr != null ? ("1:" + r.rr.toFixed(2) + (r.rr < 2 ? "（低于 1:2，偏薄）" : "")) : "—");
     out.push('<div class="bt-blk"><div class="bt-blk-title">交易前检查清单</div>' + chk.join("") + "</div>");
 
     el.innerHTML = out.join("");
