@@ -23,6 +23,7 @@ export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
 export const DISP_MULT = 1.5; // 位移 K 线：范围 ≥ N×ATR（且方向与区域一致）
 export const SWEEP_LOOKBACK = 20; // 扫荡检测回看根数（HTF）
+export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的最近对手流动性
 
 type Bias = "bull" | "bear";
 
@@ -111,20 +112,18 @@ export function isPin(c: Candle, bias: Bias): boolean {
   return c.h - Math.max(c.c, c.o) >= rng * 0.5;
 }
 
-export function oppLiquidity(
+// 参考点 ref 同侧的对手流动性（做多取 ref 上方摆动高点、做空取下方摆动低点），
+// 按距 ref 由近到远排序。
+export function liquiditySide(
   st: StructureResult,
-  price: number,
+  ref: number,
   dir: "up" | "down",
-): number | null {
+): number[] {
   const arr = dir === "up" ? st.highs : st.lows;
-  let best: number | null = null;
-  for (const p of arr) {
-    const lv = p.price;
-    if (dir === "up") {
-      if (lv > price && (best === null || lv < best)) best = lv;
-    } else if (lv < price && (best === null || lv > best)) best = lv;
-  }
-  return best;
+  return arr
+    .map((p) => p.price)
+    .filter((lv) => (dir === "up" ? lv > ref : lv < ref))
+    .sort((a, b) => Math.abs(a - ref) - Math.abs(b - ref));
 }
 
 // 流动性扫荡质量：看跌(setup 做空)看是否扫过前高、看涨(做多)看是否扫过前低——
@@ -172,9 +171,18 @@ export function buildRisk(
     stop = zone.top + buf;
     dir = "down";
   }
-  const target = oppLiquidity(st, price, dir);
-  const reward = target === null ? null : Math.abs(target - entry);
   const riskUnit = Math.abs(entry - stop);
+  // 止盈优选：从入场最近的对手流动性里，取首个 RR≥TARGET_MIN_RR 的；都不到则退回最近的那个。
+  const cands = liquiditySide(st, entry, dir);
+  let target: number | null = null;
+  for (const lv of cands) {
+    if (riskUnit > 0 && Math.abs(lv - entry) / riskUnit >= TARGET_MIN_RR) {
+      target = lv;
+      break;
+    }
+  }
+  if (target === null && cands.length) target = cands[0];
+  const reward = target === null ? null : Math.abs(target - entry);
   const rr = reward === null || riskUnit <= 0 ? null : reward / riskUnit;
   return { entry, stop, target, rr, stopPct: riskUnit / price };
 }

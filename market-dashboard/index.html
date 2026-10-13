@@ -2233,22 +2233,24 @@
     else state = "价格未到入区，等待回踩";
     return { state: state, tone: inZone ? bias : "", inZone: inZone, confirmed: !!confirmed, kind: kind, ltfBreak: lb };
   }
-  function btOppLiquidity(htfRes, price, dir) {
-    var arr = dir === "up" ? htfRes.highs : htfRes.lows, best = null;
-    arr.forEach(function (p) {
-      var lv = p.price;
-      if (dir === "up") { if (lv > price && (best === null || lv < best)) best = lv; }
-      else { if (lv < price && (best === null || lv > best)) best = lv; }
-    });
-    return best;
+  function btLiquiditySide(htfRes, ref, dir) {
+    var arr = dir === "up" ? htfRes.highs : htfRes.lows;
+    return arr.map(function (p) { return p.price; })
+      .filter(function (lv) { return dir === "up" ? lv > ref : lv < ref; })
+      .sort(function (a, b) { return Math.abs(a - ref) - Math.abs(b - ref); });
   }
   function btRisk(bias, zone, htfRes, price, atrVal) {
     if (!zone || (bias !== "bull" && bias !== "bear")) return null;
-    var buf = 0.2 * atrVal, entry, stop, target, dir;
-    if (bias === "bull") { dir = "up"; entry = zone.top; stop = zone.bottom - buf; target = btOppLiquidity(htfRes, price, "up"); }
-    else { dir = "down"; entry = zone.bottom; stop = zone.top + buf; target = btOppLiquidity(htfRes, price, "down"); }
-    var reward = target == null ? null : Math.abs(target - entry);
+    var buf = 0.2 * atrVal, entry, stop, dir;
+    if (bias === "bull") { dir = "up"; entry = zone.top; stop = zone.bottom - buf; }
+    else { dir = "down"; entry = zone.bottom; stop = zone.top + buf; }
     var riskUnit = Math.abs(entry - stop);
+    var cands = btLiquiditySide(htfRes, entry, dir), target = null;
+    if (riskUnit > 0) {
+      for (var i = 0; i < cands.length; i++) { if (Math.abs(cands[i] - entry) / riskUnit >= 2) { target = cands[i]; break; } }
+    }
+    if (target == null && cands.length) target = cands[0];
+    var reward = target == null ? null : Math.abs(target - entry);
     var rr = (reward == null || riskUnit <= 0) ? null : reward / riskUnit;
     return { entry: entry, stop: stop, target: target, rr: rr, stopPct: riskUnit / price };
   }
