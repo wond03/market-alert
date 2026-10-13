@@ -11,7 +11,7 @@ function env(name: string): string {
   return value ? String(value).trim() : "";
 }
 
-async function sendTelegram(text: string): Promise<void> {
+export async function sendTelegram(text: string): Promise<void> {
   const token = env("TELEGRAM_BOT_TOKEN");
   const chatId = env("TELEGRAM_CHAT_ID");
   if (!token || !chatId) {

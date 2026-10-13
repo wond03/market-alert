@@ -58,6 +58,38 @@ export default defineSchema({
     checked: v.number(),
   }).index("by_key", ["key"]),
 
+  // MTF SMC：每个 (交易所:标的) 的多周期扫描状态
+  mtfSmcState: defineTable({
+    key: v.string(),
+    last1hT: v.number(), // 已处理的 1h K 线时间
+    last5mT: v.number(), // 已处理的 5m K 线时间
+    last15mT: v.number(), // 已处理的 15m K 线时间
+    armedDir: v.optional(v.string()), // 1h 武装方向：bull | bear
+    armedTag: v.optional(v.string()), // 1h 突破类型：BOS | CHoCH
+    armedLevel: v.optional(v.number()),
+    armedTs: v.optional(v.number()),
+    fired: v.boolean(), // 当前 1h 结构窗口是否已推送
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // MTF SMC：1h→5m/15m 同向确认的入场信号（记录 + 推送）
+  mtfSmcSignals: defineTable({
+    exchange: v.string(),
+    symbol: v.string(),
+    tf: v.string(), // 触发的小周期：5m | 15m
+    armedDir: v.string(), // 1h 方向：bull | bear
+    armedTag: v.string(), // 1h 突破类型：BOS | CHoCH
+    armedLevel: v.number(),
+    armedTs: v.number(),
+    tag: v.string(), // 小周期突破类型：BOS | CHoCH
+    level: v.number(),
+    entryPrice: v.number(),
+    sigTs: v.number(),
+    bias: v.string(), // long | short
+    text: v.string(),
+    createdAt: v.number(),
+  }).index("by_sigTs", ["sigTs"]),
+
   // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
   smcSignals: defineTable({
     exchange: v.string(),
