@@ -433,14 +433,14 @@
         { key: "internalLen", label: "内部结构长度", type: "int", def: 5, group: "结构" },
         { key: "showSwingStruct", label: "摆动结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
         { key: "showInternal", label: "内部结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
-        { key: "showSwings", label: "标注摆动点 HH/HL/LH/LL", type: "bool", def: false, group: "结构" },
+        { key: "showSwings", label: "标注摆动点 HH/HL/LH/LL", type: "bool", def: true, group: "结构" },
         { key: "showStrongWeak", label: "强弱高/低", type: "bool", def: true, group: "结构" },
         { key: "showZones", label: "溢价/折价区", type: "bool", def: false, group: "结构" },
-        { key: "showSwingOB", label: "摆动订单块", type: "bool", def: false, group: "订单块" },
+        { key: "showSwingOB", label: "摆动订单块", type: "bool", def: true, group: "订单块" },
         { key: "showInternalOB", label: "内部订单块", type: "bool", def: true, group: "订单块" },
-        { key: "obCount", label: "订单块最多显示", type: "int", def: 5, group: "订单块" },
+        { key: "obCount", label: "订单块最多显示", type: "int", def: 10, group: "订单块" },
         { key: "showEq", label: "等高等低 EQH/EQL", type: "bool", def: true, group: "流动性" },
-        { key: "showFvg", label: "未填补 FVG", type: "bool", def: false, group: "流动性" },
+        { key: "showFvg", label: "未填补 FVG", type: "bool", def: true, group: "流动性" },
         { key: "maxFvg", label: "FVG 最多显示", type: "int", def: 6, group: "流动性" },
         { key: "showInfo", label: "显示信息标签", type: "bool", def: true, group: "信息" },
         { key: "upColor", label: "看涨颜色", type: "color", def: "#089981", group: "颜色" },
@@ -457,7 +457,7 @@
     return o;
   }
   var active = {};
-  var LS_KEY = "market-dashboard:indicator-config:v1";
+  var LS_KEY = "market-dashboard:indicator-config:v2";
   function loadActive() {
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) {}
@@ -1160,7 +1160,7 @@
 
     // 5) 等高等低
     if (p.showEq) {
-      smcEqhEql(d, 3, SMC_EQ_THRESH).forEach(function (e) {
+      smcEqhEql(d, 4, SMC_EQ_THRESH).forEach(function (e) {
         if (!inView(e.fromIdx) && !inView(e.toIdx)) return;
         var x0 = coord(e.fromIdx), x1 = coord(e.toIdx), y = yOf(e.price);
         if (x0 === null || x1 === null || y === null) return;
