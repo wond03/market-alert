@@ -151,6 +151,26 @@
   @media (max-width: 720px) {
     .readout { gap: 1px 12px; padding: 4px 8px 5px; font-size: 10.5px; }
   }
+  /* 盘段统计 (edge-stats) */
+  .stats-form { display: flex; flex-direction: column; gap: 9px; }
+  .stats-form label { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: 12px; color: var(--muted); }
+  .stats-form select, .stats-form input[type="text"] {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 5px 8px; font-size: 12px; min-width: 210px; max-width: 62%; }
+  .stats-headline { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 4px; }
+  .stats-est { font-size: 28px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+  .stats-est small { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .stats-title { font-size: 12px; color: var(--muted); }
+  .stats-line { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0;
+    border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .stats-line:last-child { border-bottom: 0; }
+  .stats-line b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stats-sec { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .stats-sec-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .stats-bad { color: #ff6b6b; }
+  .stats-note { margin-top: 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
+  .stats-ok { color: #4caf50; }
 </style>
 </head>
 <body class="notranslate">
@@ -163,6 +183,7 @@
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
     <button class="btn-settings" id="btnAlert">警报设置</button>
+    <button class="btn-settings" id="btnStats">盘段统计</button>
     <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
   </div>
 </header>
@@ -221,6 +242,38 @@
       <div class="alert-sec">
         <div class="alert-sec-title">最近触发</div>
         <div id="alertList"><div class="alert-empty">加载中…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="statsMask">
+  <div class="modal">
+    <div class="modal-head">
+      <span>盘段统计</span>
+      <div class="actions">
+        <button id="statsRefresh">刷新</button>
+        <button class="primary" id="statsClose">完成</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="stats-form">
+        <label>edge-stats 地址 <input id="stEndpoint" type="text" placeholder="http://localhost:3343"></label>
+        <label>品种 <select id="stSymbol">
+          <option value="BTCUSDT">BTCUSDT</option>
+          <option value="XAUUSD">XAUUSD</option>
+        </select></label>
+        <label>盘段 <select id="stSession">
+          <option value="newyork">纽约盘</option>
+          <option value="london">伦敦盘</option>
+          <option value="tokyo">亚洲盘</option>
+        </select></label>
+        <label>统计项 <select id="stPreset"></select></label>
+      </div>
+      <div id="stResult"><div class="stats-note">加载中…</div></div>
+      <div class="stats-note">
+        条件频率统计（P(结果 | 条件)），含样本量与 95% 置信区间。<b>只描述历史分布，不是信号、不构成建议。</b>
+        需本地运行 <b>edgestats serve</b>。
       </div>
     </div>
   </div>
@@ -2082,9 +2135,152 @@
     document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
   }
 
+  /* ================= 盘段统计 (edge-stats) ================= */
+  var ES_KEY = "market-dashboard:edgestats:v1";
+  var ES_SYMBOL = { BTC_USDT: "BTCUSDT", XAU_USDT: "XAUUSD" };
+  var esPresets = null;
+  var esState = esLoad();
+
+  function esLoad() { try { return JSON.parse(localStorage.getItem(ES_KEY)) || {}; } catch (e) { return {}; } }
+  function esSave(o) { try { localStorage.setItem(ES_KEY, JSON.stringify(o)); } catch (e) {} }
+  function esEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function esPct(x) { return x == null ? "--" : (x * 100).toFixed(1) + "%"; }
+  function defaultEdgeEndpoint() {
+    var h = location.hostname || "localhost";
+    var m = /^(\d+)-(.+)$/.exec(h);
+    if (m && /\.monkeycode-ai\.online$/.test(h)) return location.protocol + "//3343-" + m[2];
+    return "http://" + h + ":3343";
+  }
+  function edgeSymbol() {
+    var inst = INSTRUMENTS[state.activeInst];
+    return (inst && ES_SYMBOL[inst.sym.gate]) || "BTCUSDT";
+  }
+  function esEndpoint() { return document.getElementById("stEndpoint").value.trim().replace(/\/+$/, ""); }
+
+  function esLoadPresets(force) {
+    var ep = esEndpoint();
+    if (esPresets && esPresets.ep === ep && !force) return Promise.resolve(esPresets.list);
+    return fetch(ep + "/api/presets").then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (j) {
+      var list = (j.presets || []).map(function (p) { return { id: p.id, title: p.title }; })
+        .sort(function (a, b) { return a.title.localeCompare(b.title); });
+      esPresets = { ep: ep, list: list };
+      var sel = document.getElementById("stPreset");
+      var cur = sel.value || esState.preset;
+      sel.innerHTML = "";
+      list.forEach(function (p) {
+        var o = document.createElement("option"); o.value = p.id; o.textContent = p.title; sel.appendChild(o);
+      });
+      if (cur && list.some(function (p) { return p.id === cur; })) sel.value = cur;
+      return list;
+    });
+  }
+
+  function renderStatsError(msg) {
+    document.getElementById("stResult").innerHTML =
+      '<div class="stats-note stats-bad">' + esEsc(msg) + "</div>";
+  }
+
+  function renderStats(r) {
+    var el = document.getElementById("stResult");
+    function line(k, v) {
+      return '<div class="stats-line"><span>' + esEsc(k) + "</span><b>" + esEsc(v) + "</b></div>";
+    }
+    var out = [];
+    if (r.query && r.query.dsl) out.push('<div class="stats-title">' + esEsc(r.query.dsl) + "</div>");
+    out.push('<div class="stats-headline"><span class="stats-est">' + esPct(r.estimate) + "</span>" +
+      '<span class="stats-title">N=' + (r.n || 0) + " · 95% CI " +
+      (r.ci95 ? "[" + esPct(r.ci95[0]) + ", " + esPct(r.ci95[1]) + "]" : "--") +
+      (r.successes != null ? " · 命中 " + r.successes : "") + "</span></div>");
+    if (r.guards && r.guards.lowSample) out.push('<div class="stats-note stats-bad">样本偏少，估计不稳定</div>');
+    if (r.stability) out.push(line("前后半段一致",
+      (r.stability.agree ? "是" : "否") + "（" + esPct(r.stability.firstHalf.estimate) + " vs " + esPct(r.stability.secondHalf.estimate) + "）"));
+    if (r.recency) out.push(line("最近 " + r.recency.window + " 期",
+      esPct(r.recency.estimate) + "（n=" + r.recency.n + "）" + (r.recency.diverges ? " · 与全历史背离" : "")));
+    if (r.perYear && r.perYear.length) {
+      out.push('<div class="stats-sec"><div class="stats-sec-title">分年</div>' +
+        r.perYear.map(function (y) { return line(String(y.year), esPct(y.estimate) + "（n=" + y.n + "）"); }).join("") + "</div>");
+    }
+    if (r.groups && r.groups.length) {
+      out.push('<div class="stats-sec"><div class="stats-sec-title">分组</div>' +
+        r.groups.map(function (g) { return line(g.group, esPct(g.estimate) + "（n=" + g.n + "）"); }).join("") + "</div>");
+    }
+    out.push('<div class="stats-note">' + esEsc(r.disclaimer || "历史条件频率，非预测、非建议。") + "</div>");
+    el.innerHTML = out.join("");
+  }
+
+  function runStats() {
+    var ep = esEndpoint();
+    var presetId = document.getElementById("stPreset").value;
+    if (!presetId) return;
+    var symbol = document.getElementById("stSymbol").value;
+    var session = document.getElementById("stSession").value;
+    esState = { endpoint: ep, symbol: symbol, session: session, preset: presetId };
+    esSave(esState);
+    document.getElementById("stResult").innerHTML = '<div class="stats-note">查询中…</div>';
+    fetch(ep + "/api/preset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ presetId: presetId, symbol: symbol, sessionKey: session })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+    }).then(function (x) {
+      if (!x.ok || x.j.error) renderStatsError(x.j.error || "请求失败");
+      else renderStats(x.j);
+    }).catch(function (e) {
+      renderStatsError("无法连接 edge-stats（" + ep + "）：" + e.message);
+    });
+  }
+
+  function openStats() {
+    document.getElementById("stEndpoint").value = esState.endpoint || defaultEdgeEndpoint();
+    document.getElementById("stSymbol").value = edgeSymbol();
+    document.getElementById("stSession").value = esState.session || "newyork";
+    document.getElementById("statsMask").classList.add("show");
+    document.getElementById("stResult").innerHTML = '<div class="stats-note">连接中…</div>';
+    esLoadPresets(false).then(function (list) {
+      if (!list.length) { renderStatsError("没有可用的统计项。请确认本地已运行 edgestats serve 且地址正确。"); return; }
+      var sel = document.getElementById("stPreset");
+      if (esState.preset && list.some(function (p) { return p.id === esState.preset; })) sel.value = esState.preset;
+      if (!sel.value && list.length) sel.value = list[0].id;
+      runStats();
+    }).catch(function (e) {
+      renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message);
+    });
+  }
+
+  function wireStatsUI() {
+    document.getElementById("btnStats").addEventListener("click", openStats);
+    document.getElementById("statsClose").addEventListener("click", function () {
+      document.getElementById("statsMask").classList.remove("show");
+    });
+    document.getElementById("statsMask").addEventListener("click", function (e) {
+      if (e.target.id === "statsMask") document.getElementById("statsMask").classList.remove("show");
+    });
+    document.getElementById("statsRefresh").addEventListener("click", function () {
+      esLoadPresets(true).then(function (l) { if (l.length) runStats(); })
+        .catch(function (e) { renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message); });
+    });
+    document.getElementById("stEndpoint").addEventListener("change", function () {
+      esState.endpoint = esEndpoint(); esSave(esState); esPresets = null;
+      esLoadPresets(true).then(function (l) { if (l.length) runStats(); })
+        .catch(function (e) { renderStatsError("无法连接 edge-stats（" + esEndpoint() + "）：" + e.message); });
+    });
+    document.getElementById("stSymbol").addEventListener("change", runStats);
+    document.getElementById("stSession").addEventListener("change", runStats);
+    document.getElementById("stPreset").addEventListener("change", runStats);
+  }
+
   window.addEventListener("beforeunload", captureViewBars);
   window.__md = { get charts() { return charts; }, state: state, getViewBars: function () { return viewBars; } };
   wireAlertUI();
+  wireStatsUI();
   buildToolbar();
   buildTabs();
   buildPanels();
