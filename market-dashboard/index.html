@@ -181,6 +181,15 @@
   .bt-chk .bt-mark { width: 14px; flex: none; text-align: center; font-weight: 700; }
   .bt-chk.ok .bt-mark { color: #4caf50; } .bt-chk.warn .bt-mark { color: #ffb300; } .bt-chk.na .bt-mark { color: var(--muted); }
   .bt-chk .bt-q { color: var(--muted); } .bt-chk .bt-a { color: var(--text); font-weight: 600; }
+  .bt-rec { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .bt-rec-col { flex: 1 1 320px; min-width: 260px; }
+  .bt-rec-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+  .bt-rec-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+  .bt-rec-item { font-size: 12px; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    font-variant-numeric: tabular-nums; }
+  .bt-rec-item b { color: var(--text); font-weight: 700; }
+  .bt-rec-sub { color: var(--muted); font-size: 11px; }
 </style>
 </head>
 <body class="notranslate">
@@ -276,6 +285,16 @@
       <div class="bt-note">
         按脚本逐步展示当前状态：<b>1h 定背景 → 15m 结构定日内方向 → OB/FVG 找入区 → 价格进入入区即提示 → 区域外止损 → 日内流动性/前高前低止盈</b>。
         只描述结构与位置，不构成投资建议。
+      </div>
+      <div class="bt-rec">
+        <div class="bt-rec-col">
+          <div class="bt-rec-title">最近信号</div>
+          <div id="btSigList" class="bt-rec-list"><div class="bt-note" style="margin:0">加载中…</div></div>
+        </div>
+        <div class="bt-rec-col">
+          <div class="bt-rec-title">最近了结（止盈 / 止损记录）</div>
+          <div id="btOutList" class="bt-rec-list"><div class="bt-note" style="margin:0">加载中…</div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -2440,6 +2459,45 @@
 
     el.innerHTML = out.join("");
   }
+  function btResultLabel(r) { return r === "target" ? "到止盈" : r === "stop" ? "扫止损" : r === "cancel" ? "被取代" : btEsc(r); }
+  function btNum(n, dp) { return (n == null || !isFinite(n)) ? "—" : fmt(n, dp); }
+  function btDp(sym) { return sym === "BTC" ? 1 : 2; }
+  function btTimeCell(ts) {
+    var t = new Date(ts * 1000);
+    return (t.getMonth() + 1) + "/" + t.getDate() + " " + ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2);
+  }
+  function renderBattleSignals(rows) {
+    var el = document.getElementById("btSigList");
+    if (!rows || !rows.length) { el.innerHTML = '<div class="bt-note" style="margin:0">暂无信号</div>'; return; }
+    el.innerHTML = rows.map(function (s) {
+      var dp = btDp(s.symbol), long = s.bias === "long";
+      var rr = (s.rr == null) ? "—" : "1:" + s.rr.toFixed(2);
+      return '<div class="bt-rec-item"><span><b>' + btTimeCell(s.sigTs) + '</b> ' + btEsc(s.symbol) +
+        ' <span class="' + (long ? "up" : "down") + '">' + (long ? "多" : "空") + '</span>' +
+        ' <span class="bt-rec-sub">' + btEsc(s.zoneKind || "") + '</span></span>' +
+        '<span>入' + btNum(s.entryPrice, dp) + ' 损' + btNum(s.stopPrice, dp) + ' 盈' + btNum(s.targetPrice, dp) +
+        ' <b>' + rr + '</b></span></div>';
+    }).join("");
+  }
+  function renderBattleOutcomes(rows) {
+    var el = document.getElementById("btOutList");
+    if (!rows || !rows.length) { el.innerHTML = '<div class="bt-note" style="margin:0">暂不了结记录</div>'; return; }
+    el.innerHTML = rows.map(function (o) {
+      var dp = btDp(o.symbol), long = o.bias === "long";
+      var tone = o.result === "target" ? "up" : o.result === "stop" ? "down" : "";
+      return '<div class="bt-rec-item"><span><b>' + btTimeCell(o.closedTs) + '</b> ' + btEsc(o.symbol) +
+        ' <span class="' + (long ? "up" : "down") + '">' + (long ? "多" : "空") + '</span></span>' +
+        '<span><span class="' + tone + '">' + btResultLabel(o.result) + '</span> 入' + btNum(o.entryPrice, dp) +
+        ' → 结' + btNum(o.exitPrice, dp) + ' <span class="bt-rec-sub">损' + btNum(o.stopPrice, dp) +
+        ' 盈' + btNum(o.targetPrice, dp) + '</span></span></div>';
+    }).join("");
+  }
+  function refreshBattleRecords() {
+    convexQuery("battle:recentBattleSignals", { limit: 20 }).then(renderBattleSignals)
+      .catch(function () { document.getElementById("btSigList").innerHTML = '<div class="bt-note" style="margin:0">读取失败</div>'; });
+    convexQuery("battle:recentBattleOutcomes", { limit: 20 }).then(renderBattleOutcomes)
+      .catch(function () { document.getElementById("btOutList").innerHTML = '<div class="bt-note" style="margin:0">读取失败</div>'; });
+  }
   function runBattle() {
     var htfIv = document.getElementById("btHtf").value;
     var mtfIv = document.getElementById("btMtf").value;
@@ -2467,12 +2525,13 @@
     document.getElementById("btLtf").value = btState.ltf || "5m";
     document.getElementById("battleMask").classList.add("show");
     runBattle();
+    refreshBattleRecords();
   }
   function wireBattleUI() {
     document.getElementById("btnBattle").addEventListener("click", openBattle);
     document.getElementById("btClose").addEventListener("click", function () { document.getElementById("battleMask").classList.remove("show"); });
     document.getElementById("battleMask").addEventListener("click", function (e) { if (e.target.id === "battleMask") document.getElementById("battleMask").classList.remove("show"); });
-    document.getElementById("btRefresh").addEventListener("click", runBattle);
+    document.getElementById("btRefresh").addEventListener("click", function () { runBattle(); refreshBattleRecords(); });
     document.getElementById("btHtf").addEventListener("change", runBattle);
     document.getElementById("btMtf").addEventListener("change", runBattle);
     document.getElementById("btLtf").addEventListener("change", runBattle);
