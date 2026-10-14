@@ -183,6 +183,26 @@ export function currentSessionName(now: number): string | null {
   return best;
 }
 
+// 该时段本地时钟在上次走到 s.start 时的 UTC 秒时间戳（用于「盘口」新鲜度比较）。
+function sessionStartBefore(now: number, s: Session): number {
+  const locNow = tzMinutes(now, s.tz);
+  let delta = locNow - s.start;
+  if (delta < 0) delta += 1440;
+  return now - delta * 60;
+}
+
+// 「方向新鲜度」截止时刻：允许的最早结构事件时间 = 上一时段开始时刻。
+// 结构事件早于该时刻即视为过时（方向失效）。当前处于时段间隙时，取最近一个已开始时段的开始时刻。
+export function staleBefore(now: number): number {
+  const cur = currentSessionName(now);
+  if (cur) {
+    const prevName = SESSION_PREV[cur];
+    const s = SESSIONS.find((x) => x.name === prevName);
+    if (s) return sessionStartBefore(now, s);
+  }
+  return Math.max(...SESSIONS.map((s) => sessionStartBefore(now, s)));
+}
+
 // 找出「最近一个已结束的交易时段」的高/低（跳过仍在进行中的那个）。
 // 返回 (level, isUp, desc)。isUp=true 表示关注向上穿越。
 export async function resolveLevel(

@@ -985,13 +985,13 @@
       if (!isNaN(curHigh.level) && !isNaN(prevClose) && !curHigh.crossed && prevClose <= curHigh.level && close > curHigh.level) {
         var tagH = trend === "bear" ? "CHoCH" : "BOS";
         curHigh.crossed = true; trend = "bull";
-        breaks.push({ idx: i, dir: "bull", tag: tagH, level: curHigh.level, pivotIdx: curHigh.idx });
+        breaks.push({ idx: i, time: d[i].time, dir: "bull", tag: tagH, level: curHigh.level, pivotIdx: curHigh.idx });
         orderBlocks.push(smcMakeOB(d, curHigh.idx, i, "bull", parsedHigh, parsedLow));
       }
       if (!isNaN(curLow.level) && !isNaN(prevClose) && !curLow.crossed && prevClose >= curLow.level && close < curLow.level) {
         var tagL = trend === "bull" ? "CHoCH" : "BOS";
         curLow.crossed = true; trend = "bear";
-        breaks.push({ idx: i, dir: "bear", tag: tagL, level: curLow.level, pivotIdx: curLow.idx });
+        breaks.push({ idx: i, time: d[i].time, dir: "bear", tag: tagL, level: curLow.level, pivotIdx: curLow.idx });
         orderBlocks.push(smcMakeOB(d, curLow.idx, i, "bear", parsedHigh, parsedLow));
       }
       prevClose = close;
@@ -2254,11 +2254,52 @@
     var rr = (reward == null || riskUnit <= 0) ? null : reward / riskUnit;
     return { entry: entry, stop: stop, target: target, rr: rr, stopPct: riskUnit / price };
   }
+  var BT_SESSIONS = [
+    { name: "亚洲盘", tz: "Asia/Tokyo", start: 540, end: 900 },
+    { name: "伦敦盘", tz: "Europe/London", start: 480, end: 990 },
+    { name: "纽约盘", tz: "America/New_York", start: 570, end: 960 }
+  ];
+  var BT_CYCLE = ["亚洲盘", "伦敦盘", "纽约盘"];
+  var BT_PREV = { 亚洲盘: "纽约盘", 伦敦盘: "亚洲盘", 纽约盘: "伦敦盘" };
+  function btTzMinutes(ts, tz) {
+    var parts = tzFmt(tz).formatToParts(new Date(ts * 1000)), hh = 0, mm = 0;
+    for (var j = 0; j < parts.length; j++) {
+      if (parts[j].type === "hour") hh = parseInt(parts[j].value, 10) % 24;
+      else if (parts[j].type === "minute") mm = parseInt(parts[j].value, 10);
+    }
+    return hh * 60 + mm;
+  }
+  function btInWindow(m, start, end) { if (start === end) return false; if (start < end) return m >= start && m < end; return m >= start || m < end; }
+  function btCurrentSession(now) {
+    var best = null, bestIdx = -1;
+    BT_SESSIONS.forEach(function (s) {
+      if (!btInWindow(btTzMinutes(now, s.tz), s.start, s.end)) return;
+      var idx = BT_CYCLE.indexOf(s.name);
+      if (idx > bestIdx) { best = s.name; bestIdx = idx; }
+    });
+    return best;
+  }
+  function btSessionStartBefore(now, s) {
+    var locNow = btTzMinutes(now, s.tz), delta = locNow - s.start;
+    if (delta < 0) delta += 1440;
+    return now - delta * 60;
+  }
+  function btStaleBefore(now) {
+    var cur = btCurrentSession(now);
+    if (cur) {
+      var prevName = BT_PREV[cur];
+      for (var i = 0; i < BT_SESSIONS.length; i++) { if (BT_SESSIONS[i].name === prevName) return btSessionStartBefore(now, BT_SESSIONS[i]); }
+    }
+    return Math.max.apply(null, BT_SESSIONS.map(function (s) { return btSessionStartBefore(now, s); }));
+  }
   function btCompute(htf, mtf, ltf, htfIv, mtfIv, ltfIv, label) {
     var price = ltf[ltf.length - 1].close;
     var htfRes = smcRunStructure(htf, 50, "atr");
-    var bias = htfRes.trendAtEnd;
+    var rawBias = htfRes.trendAtEnd;
     var lastBreak = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
+    var nowSec = Math.floor(Date.now() / 1000);
+    var stale = (rawBias === "bull" || rawBias === "bear") && (!lastBreak || lastBreak.time < btStaleBefore(nowSec));
+    var bias = stale ? "range" : rawBias;
     var atrVal = smcAtr(ltf, 14)[ltf.length - 1] || (price * 0.002);
     var zones = [];
     if (bias === "bull" || bias === "bear") {
@@ -2274,7 +2315,7 @@
     var trail = smcTrailing(htf, 50);
     var sweep = btSweep(htfRes, htf, bias);
     return { label: label, price: price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
-      bias: bias, htfRes: htfRes, lastBreak: lastBreak, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
+      bias: bias, rawBias: rawBias, stale: stale, htfRes: htfRes, lastBreak: lastBreak, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
   }
   function renderBattle(x) {
     var el = document.getElementById("btResult"), dp = priceDp(x.price);
@@ -2284,7 +2325,9 @@
     var out = [];
     var bl = x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level)) : "—";
     out.push('<div class="bt-state ' + (up ? "bull" : dn ? "bear" : "") + '">' +
-      (up || dn ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (up ? "看涨" : "看跌") : "高周期（" + btIvLabel(x.htfIv) + "）结构：震荡 / 无明确方向") + "</div>");
+      (up || dn ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (up ? "看涨" : "看跌")
+        : x.stale ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (x.rawBias === "bull" ? "看涨" : "看跌") + " 已过时（结构事件早于上一盘口），观望"
+        : "高周期（" + btIvLabel(x.htfIv) + "）结构：震荡 / 无明确方向") + "</div>");
 
     var legLv = up ? (x.htfRes.lows.length ? x.htfRes.lows[x.htfRes.lows.length - 1].price : null)
       : (x.htfRes.highs.length ? x.htfRes.highs[x.htfRes.highs.length - 1].price : null);
@@ -2326,7 +2369,7 @@
     var chk = [];
     function ck(ok, q, a) { chk.push('<div class="bt-chk ' + (ok === true ? "ok" : ok === false ? "warn" : "na") + '"><span class="bt-mark">' + (ok === true ? "✓" : ok === false ? "!" : "·") + '</span><span><span class="bt-q">' + btEsc(q) + '</span> <span class="bt-a">' + btEsc(a) + "</span></span></div>"); }
     ck(up || dn, "方向（高周期 " + btIvLabel(x.htfIv) + "）", up ? "看涨，低周期与它同向" : dn ? "看跌，低周期与它同向" : "震荡，无明确方向");
-    ck(!!x.lastBreak, "结构事件（高周期 " + btIvLabel(x.htfIv) + "）", x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level) + "，方向已确认") : "—");
+    ck(x.stale ? false : (!!x.lastBreak), "结构事件（高周期 " + btIvLabel(x.htfIv) + "）", x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level) + (x.stale ? "，已过时（早于上一盘口）" : "，方向已确认")) : "—");
     ck(x.zones.length > 0, "入区（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].kind + " " + f(x.zones[0].bottom) + "–" + f(x.zones[0].top) + "（未缓解、未被价格吃掉" + (x.zones[0].overlap ? "，与另一类重叠" : "") + "）") : "无");
     ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].fresh ? "是（未被测试过）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
     ck(x.zones.length > 0, "位移支撑（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? "有（入区形成后 10 根内出现 ≥1.5×ATR 的同向K线）" : "—");

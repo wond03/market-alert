@@ -259,6 +259,11 @@ export function evaluateBattle(
     return { bias, firedZone, signal: null };
   }
 
+  // 方向新鲜度：定义方向的最近一次 1h 结构突破，须发生在「当前或上一个盘口」内，否则视为过时。
+  if (!lastBreak || lastBreak.t < gate.staleBefore(now)) {
+    return { bias: "range", firedZone: "", signal: null };
+  }
+
   const price = ltf[ltf.length - 1].c;
   const ltfAtr = atr(ltf, 14)[ltf.length - 1] || price * 0.002;
   const zones = battleZones(mtf, bias);
