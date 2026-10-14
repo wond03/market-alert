@@ -10,7 +10,6 @@ crons.interval("market poll", { minutes: 1 }, internal.alerts.pollAndCheck, {});
 crons.interval("smc track", { minutes: 5 }, internal.smc.scan, {});
 
 // 每分钟运行 SMC 入场信号：1h 背景 → 15m 方向 + OB/FVG 入区 → 5m 同向确认入场 → 入库 + 推送。
-// （原 mtf smc 扫描器已合入此链路，见 convex/battleCore.ts。）
 crons.interval("battle signal", { minutes: 1 }, internal.battle.scan, {});
 
 export default crons;
