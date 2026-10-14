@@ -100,6 +100,7 @@ export const scan = internalAction({
       let openStop = state?.openStop ?? null;
       let openTarget = state?.openTarget ?? null;
       let openTs = state?.openTs ?? null;
+      let openSignalId = state?.openSignalId ?? null;
 
       // 了结检查：收盘穿过止损或触及止盈 → 写入记录并解除。
       if (openTs != null && openDir) {
@@ -119,11 +120,21 @@ export const scan = internalAction({
             exitPrice: r.price,
             createdAt: now,
           });
+          // 把了结结果回填到对应的信号记录（「最近信号」列表可直接显示结果）。
+          if (openSignalId != null) {
+            await ctx.runMutation(internal.battle.closeSignal, {
+              id: openSignalId,
+              result: r.result,
+              exitPrice: r.price,
+              closedTs: r.ts,
+            });
+          }
           openDir = null;
           openEntry = null;
           openStop = null;
           openTarget = null;
           openTs = null;
+          openSignalId = null;
         }
       }
 
@@ -148,6 +159,14 @@ export const scan = internalAction({
             exitPrice: ltf[ltf.length - 1].c,
             createdAt: now,
           });
+          if (openSignalId != null) {
+            await ctx.runMutation(internal.battle.closeSignal, {
+              id: openSignalId,
+              result: "cancel",
+              exitPrice: ltf[ltf.length - 1].c,
+              closedTs: now,
+            });
+          }
         }
         firedZone = res.firedZone;
         openDir = res.signal.bias;
@@ -155,9 +174,10 @@ export const scan = internalAction({
         openStop = res.signal.stopPrice;
         openTarget = res.signal.targetPrice;
         openTs = now;
-        await ctx.runMutation(internal.battle.insertSignals, {
+        const ids = await ctx.runMutation(internal.battle.insertSignals, {
           signals: [{ exchange: EXCHANGE, symbol, createdAt: now, ...res.signal }],
         });
+        openSignalId = ids.length ? ids[0] : null;
         await sendTelegram(res.signal.text);
         fired++;
       }
@@ -170,6 +190,7 @@ export const scan = internalAction({
         openStop,
         openTarget,
         openTs,
+        openSignalId,
         updatedAt: now,
       });
     }
@@ -229,6 +250,7 @@ export const upsertState = internalMutation({
     openStop: v.union(v.number(), v.null()),
     openTarget: v.union(v.number(), v.null()),
     openTs: v.union(v.number(), v.null()),
+    openSignalId: v.union(v.id("battleSignals"), v.null()),
     updatedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -266,7 +288,22 @@ const signalValidator = v.object({
 export const insertSignals = internalMutation({
   args: { signals: v.array(signalValidator) },
   handler: async (ctx, { signals }) => {
-    for (const s of signals) await ctx.db.insert("battleSignals", s);
+    const ids = [];
+    for (const s of signals) ids.push(await ctx.db.insert("battleSignals", s));
+    return ids;
+  },
+});
+
+// 了结结果回填到信号记录（扫止损 / 到止盈 / 被取代）。
+export const closeSignal = internalMutation({
+  args: {
+    id: v.id("battleSignals"),
+    result: v.string(),
+    exitPrice: v.number(),
+    closedTs: v.number(),
+  },
+  handler: async (ctx, { id, result, exitPrice, closedTs }) => {
+    await ctx.db.patch(id, { result, exitPrice, closedTs });
   },
 });
 

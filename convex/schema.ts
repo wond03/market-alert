@@ -99,6 +99,7 @@ export default defineSchema({
     openStop: v.optional(v.union(v.number(), v.null())),
     openTarget: v.optional(v.union(v.number(), v.null())),
     openTs: v.optional(v.union(v.number(), v.null())), // 未了结信号触发时间
+    openSignalId: v.optional(v.union(v.id("battleSignals"), v.null())), // 未了结信号对应的信号记录 _id
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
@@ -123,6 +124,10 @@ export default defineSchema({
     sigTs: v.number(), // 确认所在 5m K 线时间
     text: v.string(),
     createdAt: v.number(),
+    // 了结结果（扫/到止损止盈后回填）
+    result: v.optional(v.union(v.string(), v.null())), // stop | target
+    exitPrice: v.optional(v.union(v.number(), v.null())), // 了结价
+    closedTs: v.optional(v.union(v.number(), v.null())), // 了结时间
   }).index("by_sigTs", ["sigTs"]),
 
   // 作战面板：信号了结记录（扫止损 / 到止盈 / 离场取消），用于复盘每笔的止盈止损结果

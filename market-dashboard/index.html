@@ -2472,9 +2472,11 @@
     el.innerHTML = rows.map(function (s) {
       var dp = btDp(s.symbol), long = s.bias === "long";
       var rr = (s.rr == null) ? "—" : "1:" + s.rr.toFixed(2);
+      var resTone = s.result === "target" ? "up" : s.result === "stop" ? "down" : "";
+      var res = s.result ? ' <span class="' + resTone + '">' + btResultLabel(s.result) + '</span>' : "";
       return '<div class="bt-rec-item"><span><b>' + btTimeCell(s.sigTs) + '</b> ' + btEsc(s.symbol) +
         ' <span class="' + (long ? "up" : "down") + '">' + (long ? "多" : "空") + '</span>' +
-        ' <span class="bt-rec-sub">' + btEsc(s.zoneKind || "") + '</span></span>' +
+        ' <span class="bt-rec-sub">' + btEsc(s.zoneKind || "") + '</span>' + res + '</span>' +
         '<span>入' + btNum(s.entryPrice, dp) + ' 损' + btNum(s.stopPrice, dp) + ' 盈' + btNum(s.targetPrice, dp) +
         ' <b>' + rr + '</b></span></div>';
     }).join("");
