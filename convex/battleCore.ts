@@ -288,13 +288,13 @@ export function buildMessage(
     ? `已扫前${bias === "bull" ? "低" : "高"} ${gate.fmtPrice(sweepLevel!)}`
     : "无明显扫荡";
   return (
-    `<b>SMC 作战信号</b> · 进入入区\n` +
+    `<b>SMC 作战信号</b> · 进入入区（即入场信号）\n` +
     `<b>${exName} · ${symbol}/USDT</b>\n` +
     `${sep}\n` +
     `方向（${MTF.tf}）：<b>${dirCn}</b> ｜ ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
     `背景（${HTF.tf}）：${bgCn}\n` +
     `入区（${MTF.tf}）：<b>${zone.kind}</b> ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
-    `流动性：${liq} ｜ 确认（${LTF.tf}）：<b>${confirm || "暂无"}</b>\n` +
+    `流动性：${liq} ｜ 确认（${LTF.tf}，仅参考）：<b>${confirm || "暂无"}</b>\n` +
     `${sep}\n` +
     `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
     `止损 <b>${gate.fmtPrice(stop)}</b>（${(stopPct * 100).toFixed(2)}%）\n` +
