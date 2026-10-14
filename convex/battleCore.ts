@@ -11,15 +11,17 @@ import {
   computeFvgs,
   atr,
   ATR_LEN,
+  SWING_LEN,
+  INTERNAL_LEN,
   type StructureResult,
   type StructBreak,
 } from "./luxSmc";
 import * as gate from "./gate";
 
-export const HTF = { tf: "1h", sec: 3600, swing: 50 }; // 背景：只定偏置与流动性
+export const HTF = { tf: "1h", sec: 3600, swing: SWING_LEN }; // 背景：只定偏置与流动性
 export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
-export const MTF_DIR_SWING = 5; // 15m 日内方向的结构 size（内部结构）
+export const MTF_DIR_SWING = INTERNAL_LEN; // 15m 日内方向的结构 size（内部结构）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
@@ -76,8 +78,8 @@ export function hasDisplacement(
 }
 
 export function battleZones(candles: Candle[], bias: Bias): Zone[] {
-  const swing = runStructure(candles, HTF.swing);
-  const internal = runStructure(candles, 5);
+  const swing = runStructure(candles, SWING_LEN);
+  const internal = runStructure(candles, INTERNAL_LEN);
   const atrArr = atr(candles, ATR_LEN);
   const zones: Zone[] = [];
   for (const o of swing.orderBlocks.concat(internal.orderBlocks)) {
@@ -370,7 +372,7 @@ export function evaluateBattle(
     return { bias, firedZone: "", signal: null }; // 离开所有入区 → 重新布防
   }
 
-  const ltfSt = runStructure(ltf, 5);
+  const ltfSt = runStructure(ltf, INTERNAL_LEN);
   const lb = ltfSt.breaks.length ? ltfSt.breaks[ltfSt.breaks.length - 1] : undefined;
   const recentBreak = !!lb && lb.dir === bias && ltf.length - 1 - lb.idx <= CONFIRM_LOOKBACK;
   const last = ltf[ltf.length - 1];

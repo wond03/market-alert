@@ -496,8 +496,8 @@
     smc: {
       name: "SMC 结构[LuxAlgo]", pane: "main", type: "smc",
       params: [
-        { key: "swingLen", label: "摆动结构长度", type: "int", def: 50, group: "结构" },
-        { key: "internalLen", label: "内部结构长度", type: "int", def: 5, group: "结构" },
+        { key: "swingLen", label: "摆动结构长度", type: "int", def: 8, group: "结构" },
+        { key: "internalLen", label: "内部结构长度", type: "int", def: 4, group: "结构" },
         { key: "showSwingStruct", label: "摆动结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
         { key: "showInternal", label: "内部结构 BOS/CHoCH", type: "bool", def: true, group: "结构" },
         { key: "showSwings", label: "标注摆动点 HH/HL/LH/LL", type: "bool", def: true, group: "结构" },
@@ -1070,8 +1070,8 @@
   function roFmtPct(x) { return (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%"; }
   function roReadParams() {
     var p = (active.smc && active.smc.params) || {};
-    var swing = parseInt(p.swingLen, 10); if (!isFinite(swing) || swing < 2) swing = 50;
-    var internal = parseInt(p.internalLen, 10); if (!isFinite(internal) || internal < 2) internal = 5;
+    var swing = parseInt(p.swingLen, 10); if (!isFinite(swing) || swing < 2) swing = 8;
+    var internal = parseInt(p.internalLen, 10); if (!isFinite(internal) || internal < 2) internal = 4;
     return { swing: swing, internal: internal };
   }
   function roStructRow(d, label, res) {
@@ -1204,8 +1204,8 @@
     var d = entry.data;
     if (!d || d.length < 30) return;
     var p = active.smc.params;
-    var swingLen = smcClampInt(p.swingLen, 5, 200, 50);
-    var internalLen = smcClampInt(p.internalLen, 2, 50, 5);
+    var swingLen = smcClampInt(p.swingLen, 5, 200, 8);
+    var internalLen = smcClampInt(p.internalLen, 2, 50, 4);
     var upCol = p.upColor || "#089981", dnCol = p.dnColor || "#F23645";
 
     var ts = entry.mainChart.timeScale();
@@ -2186,8 +2186,8 @@
     return { swept: false, level: null };
   }
   function btZoneSet(candles, bias) {
-    var swing = smcRunStructure(candles, 50, "atr");
-    var internal = smcRunStructure(candles, 5, "atr");
+    var swing = smcRunStructure(candles, 8, "atr");
+    var internal = smcRunStructure(candles, 4, "atr");
     var atrArr = smcAtr(candles, SMC_ATR_LEN);
     var zones = [];
     swing.orderBlocks.concat(internal.orderBlocks).forEach(function (o) {
@@ -2221,7 +2221,7 @@
         if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
       }
     });
-    var lres = smcRunStructure(ltf, 5, "atr");
+    var lres = smcRunStructure(ltf, 4, "atr");
     var lb = lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null;
     var recentBreak = lb && lb.dir === bias && (ltf.length - 1 - lb.idx) <= 3;
     var last = ltf[ltf.length - 1], prev = ltf[ltf.length - 2];
@@ -2344,12 +2344,12 @@
     var price = ltf[ltf.length - 1].close;
     var nowSec = Math.floor(Date.now() / 1000);
     // 背景：1h 只定偏置，被反向收盘破坏即作废。
-    var htfRes = smcRunStructure(htf, 50, "atr");
+    var htfRes = smcRunStructure(htf, 8, "atr");
     var htfTrend = htfRes.trendAtEnd;
     var htfLast = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
     var bg = ((htfTrend === "bull" || htfTrend === "bear") && htfLast && !btReverseClosed(htf, htfLast)) ? htfTrend : "range";
     // 日内方向：由 15m 结构刷新，须落在当前北京日内（当天有效）；反向 CHoCH 会令 trendAtEnd 翻向而自动降级。
-    var mtfDir = smcRunStructure(mtf, 5, "atr");
+    var mtfDir = smcRunStructure(mtf, 4, "atr");
     var dir = mtfDir.trendAtEnd;
     var dirLast = mtfDir.breaks.length ? mtfDir.breaks[mtfDir.breaks.length - 1] : null;
     var dirFresh = !!dirLast && dirLast.time >= btCurrentDayStart(nowSec);
@@ -2367,7 +2367,7 @@
     }
     var trig = btTrigger(ltf, bias, zones, price, atrVal);
     var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal, btIntradayLevels(mtf, nowSec));
-    var trail = smcTrailing(htf, 50);
+    var trail = smcTrailing(htf, 8);
     var sweep = btSweep(htfRes, htf, bias);
     return { label: label, price: price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
       bias: bias, bg: bg, htfTrend: htfTrend, dirOk: dirOk, dirFresh: dirFresh,

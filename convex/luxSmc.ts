@@ -20,8 +20,8 @@
 
 import type { Candle } from "./exchanges";
 
-export const SWING_LEN = 50; // 摆动结构 size（原脚本 swingsLengthInput 默认 50）
-export const INTERNAL_LEN = 5; // 内部结构 size（原脚本固定 5）
+export const SWING_LEN = 8; // 摆动结构 size
+export const INTERNAL_LEN = 4; // 内部结构 size
 export const EQ_LEN = 3; // 等高等低 size（equalHighsLowsLengthInput 默认 3）
 export const EQ_THRESHOLD = 0.1; // 等高等低阈值（×ATR200）
 export const ATR_LEN = 200;
