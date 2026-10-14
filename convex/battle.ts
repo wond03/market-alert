@@ -23,25 +23,39 @@ function env(name: string): string {
   return value ? String(value).trim() : "";
 }
 
-// 已扫止损（收盘穿过）或已到止盈（影线触及）。
-function hitStopOrTarget(
+// 信号了结判定：按时间顺序逐根，先触及止损（收盘穿过）或止盈（影线触及）者即判定了结。
+type Resolution = { result: "stop" | "target"; ts: number; price: number };
+
+function resolveSignal(
   ltf: Candle[],
   fromTs: number,
   dir: string,
   stop: number | null,
   target: number | null,
-): boolean {
+): Resolution | null {
   for (const c of ltf) {
     if (c.t < fromTs) continue;
     if (dir === "short") {
-      if (stop != null && c.c >= stop) return true;
-      if (target != null && c.l <= target) return true;
+      if (stop != null && c.c >= stop) return { result: "stop", ts: c.t, price: stop };
+      if (target != null && c.l <= target) return { result: "target", ts: c.t, price: target };
     } else {
-      if (stop != null && c.c <= stop) return true;
-      if (target != null && c.h >= target) return true;
+      if (stop != null && c.c <= stop) return { result: "stop", ts: c.t, price: stop };
+      if (target != null && c.h >= target) return { result: "target", ts: c.t, price: target };
     }
   }
-  return false;
+  return null;
+}
+
+// 由入场/止损/止盈反推盈亏比。
+function rrOf(
+  entry: number | null,
+  stop: number | null,
+  target: number | null,
+): number | null {
+  if (entry == null || stop == null || target == null) return null;
+  const risk = Math.abs(entry - stop);
+  if (risk <= 0) return null;
+  return Math.abs(target - entry) / risk;
 }
 
 const EXCHANGE: Exchange = "gate";
@@ -80,27 +94,64 @@ export const scan = internalAction({
 
       const state = await ctx.runQuery(internal.battle.getState, { key });
 
-      // 信号失效跟踪：上一笔未了结的信号若已扫止损（收盘穿过）或到止盈（触及），解除布防。
-      let firedZone = state?.firedZone ?? "";
+      // 未了结信号（用于了结记录：扫止损 / 到止盈）。
       let openDir = state?.openDir ?? null;
+      let openEntry = state?.openEntry ?? null;
       let openStop = state?.openStop ?? null;
       let openTarget = state?.openTarget ?? null;
       let openTs = state?.openTs ?? null;
-      if (firedZone && openTs && openDir) {
-        if (hitStopOrTarget(ltf, openTs, openDir, openStop, openTarget)) {
-          firedZone = "";
+
+      // 了结检查：收盘穿过止损或触及止盈 → 写入记录并解除。
+      if (openTs != null && openDir) {
+        const r = resolveSignal(ltf, openTs, openDir, openStop, openTarget);
+        if (r) {
+          await ctx.runMutation(internal.battle.insertOutcome, {
+            exchange: EXCHANGE,
+            symbol,
+            bias: openDir,
+            entryPrice: openEntry ?? openStop ?? r.price,
+            stopPrice: openStop ?? r.price,
+            targetPrice: openTarget,
+            rr: rrOf(openEntry, openStop, openTarget),
+            openedTs: openTs,
+            closedTs: r.ts,
+            result: r.result,
+            exitPrice: r.price,
+            createdAt: now,
+          });
           openDir = null;
+          openEntry = null;
           openStop = null;
           openTarget = null;
           openTs = null;
         }
       }
 
-      const res = evaluateBattle(htf, mtf, ltf, firedZone, now, EXCHANGE, symbol);
+      const prevFiredZone = state?.firedZone ?? "";
+      const res = evaluateBattle(htf, mtf, ltf, prevFiredZone, now, EXCHANGE, symbol);
 
+      let firedZone = prevFiredZone;
       if (res.signal) {
+        // 上一笔未了结信号仍在（新信号到来）→ 记为「被取代」。
+        if (openTs != null && openDir) {
+          await ctx.runMutation(internal.battle.insertOutcome, {
+            exchange: EXCHANGE,
+            symbol,
+            bias: openDir,
+            entryPrice: openEntry ?? openStop ?? ltf[ltf.length - 1].c,
+            stopPrice: openStop ?? ltf[ltf.length - 1].c,
+            targetPrice: openTarget,
+            rr: rrOf(openEntry, openStop, openTarget),
+            openedTs: openTs,
+            closedTs: now,
+            result: "cancel",
+            exitPrice: ltf[ltf.length - 1].c,
+            createdAt: now,
+          });
+        }
         firedZone = res.firedZone;
         openDir = res.signal.bias;
+        openEntry = res.signal.entryPrice;
         openStop = res.signal.stopPrice;
         openTarget = res.signal.targetPrice;
         openTs = now;
@@ -109,19 +160,13 @@ export const scan = internalAction({
         });
         await sendTelegram(res.signal.text);
         fired++;
-      } else if (!res.firedZone) {
-        // 未在区内（离开/未到）→ 一并清空未了结信号
-        firedZone = "";
-        openDir = null;
-        openStop = null;
-        openTarget = null;
-        openTs = null;
       }
 
       await ctx.runMutation(internal.battle.upsertState, {
         key,
         firedZone,
         openDir,
+        openEntry,
         openStop,
         openTarget,
         openTs,
@@ -180,6 +225,7 @@ export const upsertState = internalMutation({
     key: v.string(),
     firedZone: v.string(),
     openDir: v.union(v.string(), v.null()),
+    openEntry: v.union(v.number(), v.null()),
     openStop: v.union(v.number(), v.null()),
     openTarget: v.union(v.number(), v.null()),
     openTs: v.union(v.number(), v.null()),
@@ -224,6 +270,26 @@ export const insertSignals = internalMutation({
   },
 });
 
+export const insertOutcome = internalMutation({
+  args: {
+    exchange: v.string(),
+    symbol: v.string(),
+    bias: v.string(),
+    entryPrice: v.number(),
+    stopPrice: v.number(),
+    targetPrice: v.union(v.number(), v.null()),
+    rr: v.union(v.number(), v.null()),
+    openedTs: v.number(),
+    closedTs: v.number(),
+    result: v.string(),
+    exitPrice: v.number(),
+    createdAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("battleOutcomes", args);
+  },
+});
+
 // ---- 公开查询（只读） ----
 
 export const recentBattleSignals = query({
@@ -234,4 +300,15 @@ export const recentBattleSignals = query({
       .withIndex("by_sigTs")
       .order("desc")
       .take(limit ?? 50),
+});
+
+// 信号了结记录（扫止损 / 到止盈 / 被取代），用于复盘每笔的止盈止损结果。
+export const recentBattleOutcomes = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) =>
+    ctx.db
+      .query("battleOutcomes")
+      .withIndex("by_closedTs")
+      .order("desc")
+      .take(limit ?? 100),
 });

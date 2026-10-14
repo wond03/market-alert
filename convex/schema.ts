@@ -95,6 +95,7 @@ export default defineSchema({
     key: v.string(),
     firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
     openDir: v.optional(v.union(v.string(), v.null())), // 未了结信号方向：long | short
+    openEntry: v.optional(v.union(v.number(), v.null())), // 未了结信号入场价
     openStop: v.optional(v.union(v.number(), v.null())),
     openTarget: v.optional(v.union(v.number(), v.null())),
     openTs: v.optional(v.union(v.number(), v.null())), // 未了结信号触发时间
@@ -123,6 +124,22 @@ export default defineSchema({
     text: v.string(),
     createdAt: v.number(),
   }).index("by_sigTs", ["sigTs"]),
+
+  // 作战面板：信号了结记录（扫止损 / 到止盈 / 离场取消），用于复盘每笔的止盈止损结果
+  battleOutcomes: defineTable({
+    exchange: v.string(),
+    symbol: v.string(),
+    bias: v.string(), // long | short
+    entryPrice: v.number(),
+    stopPrice: v.number(),
+    targetPrice: v.union(v.number(), v.null()),
+    rr: v.union(v.number(), v.null()),
+    openedTs: v.number(), // 信号触发时间
+    closedTs: v.number(), // 了结时间
+    result: v.string(), // stop | target | cancel
+    exitPrice: v.number(), // 了结价（扫止损/到止盈用该价位；取消用当时收盘）
+    createdAt: v.number(),
+  }).index("by_closedTs", ["closedTs"]),
 
   // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
   smcSignals: defineTable({    exchange: v.string(),
