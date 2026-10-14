@@ -94,6 +94,10 @@ export default defineSchema({
   battleState: defineTable({
     key: v.string(),
     firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
+    openDir: v.optional(v.union(v.string(), v.null())), // 未了结信号方向：long | short
+    openStop: v.optional(v.union(v.number(), v.null())),
+    openTarget: v.optional(v.union(v.number(), v.null())),
+    openTs: v.optional(v.union(v.number(), v.null())), // 未了结信号触发时间
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
@@ -102,7 +106,8 @@ export default defineSchema({
     exchange: v.string(),
     symbol: v.string(),
     bias: v.string(), // long | short
-    htfTag: v.string(), // 1h 突破类型：BOS | CHoCH
+    bg: v.optional(v.string()), // 1h 背景：bull | bear | range
+    htfTag: v.string(), // 方向(15m)突破类型：BOS | CHoCH
     htfLevel: v.number(),
     zoneKind: v.string(), // OB | FVG
     zoneTop: v.number(),

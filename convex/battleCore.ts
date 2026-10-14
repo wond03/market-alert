@@ -1,8 +1,9 @@
 // 作战面板纯逻辑（无 Convex 依赖）——被 convex/battle.ts 使用，并可在离线用真实
 // K 线复算，保证线上信号与看盘页「作战面板」判定一致。
 //
-// 口径：HTF(1h) 摆动结构 size=50 定方向 → MTF(15m) 顺方向未缓解且带位移的 OB/FVG 为入区 →
-// 价格进入该入区即提示（低周期 5m 确认仅作展示、不作门槛）→ 输出入场/止损/止盈/盈亏比。
+// 口径：MTF(15m) 结构定日内方向（1h 仅作背景，被反向收盘破坏即作废）→ MTF(15m) 顺方向、未缓解且带
+// 位移的 OB/FVG 为入区 → 价格进入该入区即提示（低周期 5m 确认仅作展示、不作门槛）→ 输出入场/止损/止盈/盈亏比。
+// 止盈：距入场 ≥TARGET_MIN_RR×风险 的最近对手流动性（1h 摆动点 + 前日/亚洲/开盘区间高低）。
 
 import type { Candle } from "./exchanges";
 import {
@@ -11,12 +12,14 @@ import {
   atr,
   ATR_LEN,
   type StructureResult,
+  type StructBreak,
 } from "./luxSmc";
 import * as gate from "./gate";
 
-export const HTF = { tf: "1h", sec: 3600, swing: 50 };
-export const MTF = { tf: "15m", sec: 900 };
-export const LTF = { tf: "5m", sec: 300 };
+export const HTF = { tf: "1h", sec: 3600, swing: 50 }; // 背景：只定偏置与流动性
+export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
+export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
+export const MTF_DIR_SWING = 5; // 15m 日内方向的结构 size（内部结构）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
@@ -38,6 +41,7 @@ export type Zone = {
 
 export type BattleSignal = {
   bias: "long" | "short";
+  bg: string; // 1h 背景：bull | bear | range
   htfTag: string;
   htfLevel: number;
   zoneKind: string;
@@ -112,6 +116,66 @@ export function isPin(c: Candle, bias: Bias): boolean {
   return c.h - Math.max(c.c, c.o) >= rng * 0.5;
 }
 
+// 反向收盘破坏：结构突破后若出现反向收盘穿过被突破的价位，则该结构方向作废。
+export function reverseClosed(candles: Candle[], brk: StructBreak, lastIdx: number): boolean {
+  for (let k = brk.idx + 1; k <= lastIdx; k++) {
+    if (brk.dir === "bull" ? candles[k].c < brk.level : candles[k].c > brk.level) return true;
+  }
+  return false;
+}
+
+// [from, to) 区间内的高低。
+function rangeOf(candles: Candle[], from: number, to: number): { hi: number; lo: number } | null {
+  let hi = -Infinity;
+  let lo = Infinity;
+  let any = false;
+  for (const c of candles) {
+    if (c.t < from || c.t >= to) continue;
+    any = true;
+    if (c.h > hi) hi = c.h;
+    if (c.l < lo) lo = c.l;
+  }
+  return any ? { hi, lo } : null;
+}
+
+// 前一日（北京时间）高低。
+function prevDayRange(candles: Candle[], now: number): { hi: number; lo: number } | null {
+  const dayKey = (t: number) => Math.floor((t + gate.BJ_OFFSET) / 86400);
+  const today = dayKey(now);
+  let best = -Infinity;
+  let hi = -Infinity;
+  let lo = Infinity;
+  let any = false;
+  for (const c of candles) {
+    const k = dayKey(c.t);
+    if (k >= today) continue;
+    if (k > best) {
+      best = k;
+      hi = c.h;
+      lo = c.l;
+      any = true;
+    } else if (k === best) {
+      if (c.h > hi) hi = c.h;
+      if (c.l < lo) lo = c.l;
+    }
+  }
+  return any ? { hi, lo } : null;
+}
+
+// 日内流动性止盈候选：前日高低 + 上一个亚洲盘高低 + 当前盘口开盘 30 分钟区间高低。
+export function intradayLevels(candles: Candle[], now: number): number[] {
+  const out: number[] = [];
+  const push = (r: { hi: number; lo: number } | null) => {
+    if (r && isFinite(r.hi) && isFinite(r.lo)) out.push(r.hi, r.lo);
+  };
+  push(prevDayRange(candles, now));
+  const asia = gate.lastClosedSessionWindow(now, "亚洲盘");
+  push(rangeOf(candles, asia.start, asia.end));
+  const cur = gate.currentSessionWindow(now);
+  if (cur) push(rangeOf(candles, cur.start, cur.start + 1800));
+  return out;
+}
+
 // 参考点 ref 同侧的对手流动性（做多取 ref 上方摆动高点、做空取下方摆动低点），
 // 按距 ref 由近到远排序。
 export function liquiditySide(
@@ -157,6 +221,7 @@ export function buildRisk(
   st: StructureResult,
   price: number,
   atrVal: number,
+  extras: number[] = [],
 ): { entry: number; stop: number; target: number | null; rr: number | null; stopPct: number } {
   const buf = STOP_BUF_ATR * atrVal;
   let entry: number;
@@ -172,8 +237,13 @@ export function buildRisk(
     dir = "down";
   }
   const riskUnit = Math.abs(entry - stop);
-  // 止盈优选：从入场最近的对手流动性里，取首个 RR≥TARGET_MIN_RR 的；都不到则退回最近的那个。
+  // 止盈候选 = 1h 摆动点 + 日内流动性（前日/亚洲/开盘区间高低），按距入场由近到远。
   const cands = liquiditySide(st, entry, dir);
+  for (const lv of extras) {
+    if (isFinite(lv) && (dir === "up" ? lv > entry : lv < entry)) cands.push(lv);
+  }
+  cands.sort((a, b) => Math.abs(a - entry) - Math.abs(b - entry));
+  // 取首个 RR≥TARGET_MIN_RR 的；都不到则退回最近的那个。
   let target: number | null = null;
   for (const lv of cands) {
     if (riskUnit > 0 && Math.abs(lv - entry) / riskUnit >= TARGET_MIN_RR) {
@@ -191,6 +261,7 @@ export function buildMessage(
   exchange: string,
   symbol: string,
   bias: Bias,
+  bg: string,
   htfTag: string,
   htfLevel: number,
   zone: Zone,
@@ -207,6 +278,7 @@ export function buildMessage(
   const dirCn = bias === "bull" ? "看涨" : "看跌";
   const dirWord = bias === "bull" ? "向上" : "向下";
   const tradeCn = bias === "bull" ? "做多" : "做空";
+  const bgCn = bg === "bull" ? "偏多" : bg === "bear" ? "偏空" : "震荡";
   const exName = gate.EXCHANGE_NAME[exchange] ?? exchange;
   const sess = gate.currentSessionName(now) ?? "时段间隙";
   const sep = "━━━━━━━━━━";
@@ -217,7 +289,8 @@ export function buildMessage(
     `<b>SMC 作战信号</b> · 进入入区\n` +
     `<b>${exName} · ${symbol}/USDT</b>\n` +
     `${sep}\n` +
-    `方向（${HTF.tf}）：<b>${dirCn}</b> ｜ ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
+    `方向（${MTF.tf}）：<b>${dirCn}</b> ｜ ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
+    `背景（${HTF.tf}）：${bgCn}\n` +
     `入区（${MTF.tf}）：<b>${zone.kind}</b> ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
     `流动性：${liq} ｜ 确认（${LTF.tf}）：<b>${confirm || "暂无"}</b>\n` +
     `${sep}\n` +
@@ -249,20 +322,31 @@ export function evaluateBattle(
   exchange = "gate",
   symbol = "BTC",
 ): BattleEval {
+  // 1h 背景：只定偏置；被反向收盘破坏即作废（不看经过多少根 K 线）。
   const htfSt = runStructure(htf, HTF.swing);
-  const bias = htfSt.trendAtEnd;
-  const lastBreak = htfSt.breaks.length ? htfSt.breaks[htfSt.breaks.length - 1] : undefined;
-  const sweep = sweepQuality(htfSt, htf, bias as Bias, SWEEP_LOOKBACK);
+  const htfTrend = htfSt.trendAtEnd;
+  const htfLast = htfSt.breaks.length ? htfSt.breaks[htfSt.breaks.length - 1] : undefined;
+  const bg: string =
+    (htfTrend === "bull" || htfTrend === "bear") &&
+    htfLast &&
+    !reverseClosed(htf, htfLast, htf.length - 1)
+      ? htfTrend
+      : "range";
 
   let firedZone = prevFiredZone;
-  if (bias !== "bull" && bias !== "bear") {
-    return { bias, firedZone, signal: null };
-  }
 
-  // 方向新鲜度：定义方向的最近一次 1h 结构突破，须发生在「当前或上一个盘口」内，否则视为过时。
-  if (!lastBreak || lastBreak.t < gate.staleBefore(now)) {
+  // 日内方向：由 15m 结构刷新，且须落在当前北京日内（「当天有效」）。
+  // 出现反向 CHoCH/BOS 时 trendAtEnd 会翻向，方向即自动降级，无需额外收盘破坏判据。
+  const mtfSt = runStructure(mtf, MTF_DIR_SWING);
+  const dir = mtfSt.trendAtEnd;
+  const dirLast = mtfSt.breaks.length ? mtfSt.breaks[mtfSt.breaks.length - 1] : undefined;
+  const dirFresh = !!dirLast && dirLast.t >= gate.currentDayStart(now);
+  if ((dir !== "bull" && dir !== "bear") || !dirFresh) {
     return { bias: "range", firedZone: "", signal: null };
   }
+  const bias: Bias = dir;
+
+  const sweep = sweepQuality(htfSt, htf, bias, SWEEP_LOOKBACK);
 
   const price = ltf[ltf.length - 1].c;
   const ltfAtr = atr(ltf, 14)[ltf.length - 1] || price * 0.002;
@@ -307,16 +391,17 @@ export function evaluateBattle(
     return { bias, firedZone, signal: null };
   }
 
-  const risk = buildRisk(bias, inZone, htfSt, price, ltfAtr);
-  const htfTag = lastBreak ? lastBreak.tag : "结构";
-  const htfLevel = lastBreak ? lastBreak.level : inZone.top;
+  const risk = buildRisk(bias, inZone, htfSt, price, ltfAtr, intradayLevels(mtf, now));
+  const dirTag = dirLast ? dirLast.tag : "结构";
+  const dirLevel = dirLast ? dirLast.level : inZone.top;
   return {
     bias,
     firedZone: zoneKey,
     signal: {
       bias: bias === "bull" ? "long" : "short",
-      htfTag,
-      htfLevel,
+      bg,
+      htfTag: dirTag,
+      htfLevel: dirLevel,
       zoneKind: inZone.kind,
       zoneTop: inZone.top,
       zoneBottom: inZone.bottom,
@@ -332,8 +417,9 @@ export function evaluateBattle(
         exchange,
         symbol,
         bias,
-        htfTag,
-        htfLevel,
+        bg,
+        dirTag,
+        dirLevel,
         inZone,
         confirm,
         risk.entry,

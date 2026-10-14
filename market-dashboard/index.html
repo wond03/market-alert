@@ -2239,13 +2239,18 @@
       .filter(function (lv) { return dir === "up" ? lv > ref : lv < ref; })
       .sort(function (a, b) { return Math.abs(a - ref) - Math.abs(b - ref); });
   }
-  function btRisk(bias, zone, htfRes, price, atrVal) {
+  function btRisk(bias, zone, htfRes, price, atrVal, extras) {
     if (!zone || (bias !== "bull" && bias !== "bear")) return null;
     var buf = 0.2 * atrVal, entry, stop, dir;
     if (bias === "bull") { dir = "up"; entry = zone.top; stop = zone.bottom - buf; }
     else { dir = "down"; entry = zone.bottom; stop = zone.top + buf; }
     var riskUnit = Math.abs(entry - stop);
-    var cands = btLiquiditySide(htfRes, entry, dir), target = null;
+    var cands = btLiquiditySide(htfRes, entry, dir);
+    (extras || []).forEach(function (lv) {
+      if (isFinite(lv) && (dir === "up" ? lv > entry : lv < entry)) cands.push(lv);
+    });
+    cands.sort(function (a, b) { return Math.abs(a - entry) - Math.abs(b - entry); });
+    var target = null;
     if (riskUnit > 0) {
       for (var i = 0; i < cands.length; i++) { if (Math.abs(cands[i] - entry) / riskUnit >= 2) { target = cands[i]; break; } }
     }
@@ -2284,22 +2289,72 @@
     if (delta < 0) delta += 1440;
     return now - delta * 60;
   }
-  function btStaleBefore(now) {
+  function btCurrentSessionStart(now) {
     var cur = btCurrentSession(now);
-    if (cur) {
-      var prevName = BT_PREV[cur];
-      for (var i = 0; i < BT_SESSIONS.length; i++) { if (BT_SESSIONS[i].name === prevName) return btSessionStartBefore(now, BT_SESSIONS[i]); }
-    }
+    if (cur) { for (var i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === cur) return btSessionStartBefore(now, BT_SESSIONS[i]); }
     return Math.max.apply(null, BT_SESSIONS.map(function (s) { return btSessionStartBefore(now, s); }));
+  }
+  function btSessionDurSec(s) { var d = s.end - s.start; if (d <= 0) d += 1440; return d * 60; }
+  function btCurrentDayStart(now) { return Math.floor((now + 8 * 3600) / 86400) * 86400 - 8 * 3600; }
+  function btCurrentSessionWindow(now) {
+    var cur = btCurrentSession(now); if (!cur) return null;
+    for (var i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === cur) { var s = BT_SESSIONS[i], st = btSessionStartBefore(now, s); return { name: cur, start: st, end: st + btSessionDurSec(s) }; }
+    return null;
+  }
+  function btLastClosedWindow(now, name) {
+    var s = null, i;
+    for (i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === name) s = BT_SESSIONS[i];
+    if (!s) s = BT_SESSIONS[0];
+    var st = btSessionStartBefore(now, s), dur = btSessionDurSec(s);
+    var base = (st + dur > now) ? (st - 86400) : st;
+    return { start: base, end: base + dur };
+  }
+  function btRangeOf(c, from, to) {
+    var hi = -Infinity, lo = Infinity, any = false;
+    for (var i = 0; i < c.length; i++) { if (c[i].time < from || c[i].time >= to) continue; any = true; if (c[i].high > hi) hi = c[i].high; if (c[i].low < lo) lo = c[i].low; }
+    return any ? { hi: hi, lo: lo } : null;
+  }
+  function btPrevDayRange(c, now) {
+    function dayKey(t) { return Math.floor((t + 8 * 3600) / 86400); }
+    var today = dayKey(now), best = -Infinity, hi = -Infinity, lo = Infinity, any = false;
+    for (var i = 0; i < c.length; i++) {
+      var k = dayKey(c[i].time);
+      if (k >= today) continue;
+      if (k > best) { best = k; hi = c[i].high; lo = c[i].low; any = true; }
+      else if (k === best) { if (c[i].high > hi) hi = c[i].high; if (c[i].low < lo) lo = c[i].low; }
+    }
+    return any ? { hi: hi, lo: lo } : null;
+  }
+  function btIntradayLevels(mtf, now) {
+    var out = [];
+    function push(r) { if (r && isFinite(r.hi) && isFinite(r.lo)) { out.push(r.hi); out.push(r.lo); } }
+    push(btPrevDayRange(mtf, now));
+    var asia = btLastClosedWindow(now, "亚洲盘"); push(btRangeOf(mtf, asia.start, asia.end));
+    var cur = btCurrentSessionWindow(now); if (cur) push(btRangeOf(mtf, cur.start, cur.start + 1800));
+    return out;
+  }
+  function btReverseClosed(candles, brk) {
+    if (!brk) return false;
+    for (var k = brk.idx + 1; k < candles.length; k++) {
+      if (brk.dir === "bull" ? candles[k].close < brk.level : candles[k].close > brk.level) return true;
+    }
+    return false;
   }
   function btCompute(htf, mtf, ltf, htfIv, mtfIv, ltfIv, label) {
     var price = ltf[ltf.length - 1].close;
-    var htfRes = smcRunStructure(htf, 50, "atr");
-    var rawBias = htfRes.trendAtEnd;
-    var lastBreak = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
     var nowSec = Math.floor(Date.now() / 1000);
-    var stale = (rawBias === "bull" || rawBias === "bear") && (!lastBreak || lastBreak.time < btStaleBefore(nowSec));
-    var bias = stale ? "range" : rawBias;
+    // 背景：1h 只定偏置，被反向收盘破坏即作废。
+    var htfRes = smcRunStructure(htf, 50, "atr");
+    var htfTrend = htfRes.trendAtEnd;
+    var htfLast = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
+    var bg = ((htfTrend === "bull" || htfTrend === "bear") && htfLast && !btReverseClosed(htf, htfLast)) ? htfTrend : "range";
+    // 日内方向：由 15m 结构刷新，须落在当前北京日内（当天有效）；反向 CHoCH 会令 trendAtEnd 翻向而自动降级。
+    var mtfDir = smcRunStructure(mtf, 5, "atr");
+    var dir = mtfDir.trendAtEnd;
+    var dirLast = mtfDir.breaks.length ? mtfDir.breaks[mtfDir.breaks.length - 1] : null;
+    var dirFresh = !!dirLast && dirLast.time >= btCurrentDayStart(nowSec);
+    var dirOk = (dir === "bull" || dir === "bear") && dirFresh;
+    var bias = dirOk ? dir : "range";
     var atrVal = smcAtr(ltf, 14)[ltf.length - 1] || (price * 0.002);
     var zones = [];
     if (bias === "bull" || bias === "bear") {
@@ -2311,11 +2366,12 @@
       zones.sort(function (a, b) { return a.dist - b.dist; });
     }
     var trig = btTrigger(ltf, bias, zones, price, atrVal);
-    var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal);
+    var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal, btIntradayLevels(mtf, nowSec));
     var trail = smcTrailing(htf, 50);
     var sweep = btSweep(htfRes, htf, bias);
     return { label: label, price: price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
-      bias: bias, rawBias: rawBias, stale: stale, htfRes: htfRes, lastBreak: lastBreak, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
+      bias: bias, bg: bg, htfTrend: htfTrend, dirOk: dirOk, dirFresh: dirFresh,
+      htfRes: htfRes, mtfRes: mtfDir, lastBreak: dirLast, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
   }
   function renderBattle(x) {
     var el = document.getElementById("btResult"), dp = priceDp(x.price);
@@ -2323,17 +2379,19 @@
     function row(k, v, tone) { return '<div class="bt-row"><span class="bt-k">' + btEsc(k) + '</span><span class="bt-v' + (tone ? " " + tone : "") + '">' + btEsc(v) + '</span></div>'; }
     var up = x.bias === "bull", dn = x.bias === "bear";
     var out = [];
+    var bgCn = x.bg === "bull" ? "看涨" : x.bg === "bear" ? "看跌" : "震荡";
     var bl = x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level)) : "—";
     out.push('<div class="bt-state ' + (up ? "bull" : dn ? "bear" : "") + '">' +
-      (up || dn ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (up ? "看涨" : "看跌")
-        : x.stale ? "高周期（" + btIvLabel(x.htfIv) + "）方向：" + (x.rawBias === "bull" ? "看涨" : "看跌") + " 已过时（结构事件早于上一盘口），观望"
-        : "高周期（" + btIvLabel(x.htfIv) + "）结构：震荡 / 无明确方向") + "</div>");
+      (up || dn ? "日内方向（" + btIvLabel(x.mtfIv) + "）：" + (up ? "看涨" : "看跌") + " ｜ 背景（" + btIvLabel(x.htfIv) + "）：" + bgCn
+        : x.dirFresh === false ? "日内方向：今日 15m 无新结构事件，观望 ｜ 背景（" + btIvLabel(x.htfIv) + "）：" + bgCn
+        : "日内方向：震荡 / 无明确方向 ｜ 背景（" + btIvLabel(x.htfIv) + "）：" + bgCn) + "</div>");
 
-    var legLv = up ? (x.htfRes.lows.length ? x.htfRes.lows[x.htfRes.lows.length - 1].price : null)
-      : (x.htfRes.highs.length ? x.htfRes.highs[x.htfRes.highs.length - 1].price : null);
+    var legLv = up ? (x.mtfRes.lows.length ? x.mtfRes.lows[x.mtfRes.lows.length - 1].price : null)
+      : (x.mtfRes.highs.length ? x.mtfRes.highs[x.mtfRes.highs.length - 1].price : null);
     var pct = (isFinite(x.trail.top) && isFinite(x.trail.bottom) && x.trail.top > x.trail.bottom) ? (x.price - x.trail.bottom) / (x.trail.top - x.trail.bottom) : null;
-    out.push('<div class="bt-blk"><div class="bt-blk-title">结构方向 <span class="bt-tag">BOS / CHoCH</span></div>' +
-      row("方向周期", btIvLabel(x.htfIv)) +
+    out.push('<div class="bt-blk"><div class="bt-blk-title">日内方向 <span class="bt-tag">BOS / CHoCH</span></div>' +
+      row("方向周期", btIvLabel(x.mtfIv)) +
+      row("背景周期（" + btIvLabel(x.htfIv) + "）", bgCn, x.bg === "bull" ? "up" : x.bg === "bear" ? "down" : "") +
       row("最近结构事件", bl, x.lastBreak ? (x.lastBreak.dir === "bull" ? "up" : "down") : "") +
       row("失效线（结构腿" + (up ? "低" : "高") + "）", legLv == null ? "—" : f(legLv)) +
       (pct != null ? row("区间位置", (pct > 0.55 ? "溢价" : pct < 0.45 ? "折价" : "均衡") + " " + Math.round(pct * 100) + "%") : "") +
@@ -2361,22 +2419,23 @@
     out.push('<div class="bt-blk"><div class="bt-blk-title">风控执行 <span class="bt-tag">' + (up ? "做多剧本" : dn ? "做空剧本" : "—") + '</span></div>' +
       (r ? row("入场", f(r.entry)) +
         row("止损（区域外）", f(r.stop) + "（" + (r.stopPct * 100).toFixed(2) + "%）") +
-        row("止盈（前高前低/流动性）", r.target == null ? "—" : f(r.target)) +
+        row("止盈（结构/日内流动性）", r.target == null ? "—" : f(r.target)) +
         row("盈亏比", r.rr == null ? "—" : "1:" + r.rr.toFixed(2), r.rr != null && r.rr >= 2 ? "up" : "down")
         : '<div class="bt-note" style="margin-top:0">无可用区域，暂不给执行参数。</div>') +
       "</div>");
 
     var chk = [];
     function ck(ok, q, a) { chk.push('<div class="bt-chk ' + (ok === true ? "ok" : ok === false ? "warn" : "na") + '"><span class="bt-mark">' + (ok === true ? "✓" : ok === false ? "!" : "·") + '</span><span><span class="bt-q">' + btEsc(q) + '</span> <span class="bt-a">' + btEsc(a) + "</span></span></div>"); }
-    ck(up || dn, "方向（高周期 " + btIvLabel(x.htfIv) + "）", up ? "看涨，低周期与它同向" : dn ? "看跌，低周期与它同向" : "震荡，无明确方向");
-    ck(x.stale ? false : (!!x.lastBreak), "结构事件（高周期 " + btIvLabel(x.htfIv) + "）", x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level) + (x.stale ? "，已过时（早于上一盘口）" : "，方向已确认")) : "—");
-    ck(x.zones.length > 0, "入区（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].kind + " " + f(x.zones[0].bottom) + "–" + f(x.zones[0].top) + "（未缓解、未被价格吃掉" + (x.zones[0].overlap ? "，与另一类重叠" : "") + "）") : "无");
-    ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].fresh ? "是（未被测试过）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
-    ck(x.zones.length > 0, "位移支撑（中周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? "有（入区形成后 10 根内出现 ≥1.5×ATR 的同向K线）" : "—");
-    ck((up || dn) ? x.sweep.swept : null, "流动性（高周期 " + btIvLabel(x.htfIv) + "）", (up || dn) ? (x.sweep.swept ? ("已扫前" + (up ? "低" : "高") + " " + f(x.sweep.level) + "，属更高质量背景") : "未扫到前高/前低，属一般背景") : "—");
+    ck(up || dn, "日内方向（" + btIvLabel(x.mtfIv) + "）", up ? "看涨，入区与它同向" : dn ? "看跌，入区与它同向" : "震荡，无明确方向");
+    ck(x.lastBreak ? x.dirFresh : false, "结构事件（" + btIvLabel(x.mtfIv) + "）", x.lastBreak ? (x.lastBreak.tag + " " + (x.lastBreak.dir === "bull" ? "向上" : "向下") + "破 " + f(x.lastBreak.level) + (x.dirFresh ? "，在今日内，方向已确认" : "，早于今日，已失效")) : "—");
+    ck(x.bg !== "range", "背景（" + btIvLabel(x.htfIv) + "）", x.bg === "bull" ? "看涨（与日内方向呼应更佳）" : x.bg === "bear" ? "看跌（与日内方向呼应更佳）" : "震荡，仅作参考");
+    ck(x.zones.length > 0, "入区（方向周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].kind + " " + f(x.zones[0].bottom) + "–" + f(x.zones[0].top) + "（未缓解、未被价格吃掉" + (x.zones[0].overlap ? "，与另一类重叠" : "") + "）") : "无");
+    ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜（方向周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].fresh ? "是（未被测试过）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
+    ck(x.zones.length > 0, "位移支撑（方向周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? "有（入区形成后 10 根内出现 ≥1.5×ATR 的同向K线）" : "—");
+    ck((up || dn) ? x.sweep.swept : null, "流动性（背景周期 " + btIvLabel(x.htfIv) + "）", (up || dn) ? (x.sweep.swept ? ("已扫前" + (up ? "低" : "高") + " " + f(x.sweep.level) + "，属更高质量背景") : "未扫到前高/前低，属一般背景") : "—");
     ck(x.trig.confirmed ? true : null, "低周期确认（" + btIvLabel(x.ltfIv) + "）", x.trig.confirmed ? (x.trig.kind + "，出现在区域内") : "暂无（进入入区即提示，非必须）");
-    ck(r ? true : null, "止损（中周期 " + btIvLabel(x.mtfIv) + "）", r ? (f(r.stop) + "，在区域外（0.2×ATR 缓冲）") : "—");
-    ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比（中周期 " + btIvLabel(x.mtfIv) + "）", r && r.rr != null ? ("1:" + r.rr.toFixed(2) + (r.rr < 2 ? "（低于 1:2，偏薄）" : "")) : "—");
+    ck(r ? true : null, "止损（方向周期 " + btIvLabel(x.mtfIv) + "）", r ? (f(r.stop) + "，在区域外（0.2×ATR 缓冲）") : "—");
+    ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比（方向周期 " + btIvLabel(x.mtfIv) + "）", r && r.rr != null ? ("1:" + r.rr.toFixed(2) + (r.rr < 2 ? "（低于 1:2，偏薄）" : "")) : "—");
     out.push('<div class="bt-blk"><div class="bt-blk-title">交易前检查清单</div>' + chk.join("") + "</div>");
 
     el.innerHTML = out.join("");

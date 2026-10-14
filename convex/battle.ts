@@ -23,6 +23,27 @@ function env(name: string): string {
   return value ? String(value).trim() : "";
 }
 
+// 已扫止损（收盘穿过）或已到止盈（影线触及）。
+function hitStopOrTarget(
+  ltf: Candle[],
+  fromTs: number,
+  dir: string,
+  stop: number | null,
+  target: number | null,
+): boolean {
+  for (const c of ltf) {
+    if (c.t < fromTs) continue;
+    if (dir === "short") {
+      if (stop != null && c.c >= stop) return true;
+      if (target != null && c.l <= target) return true;
+    } else {
+      if (stop != null && c.c <= stop) return true;
+      if (target != null && c.h >= target) return true;
+    }
+  }
+  return false;
+}
+
 const EXCHANGE: Exchange = "gate";
 const SYMBOLS = ["BTC", "XAU"];
 
@@ -58,29 +79,54 @@ export const scan = internalAction({
       if (htf.length < 60 || mtf.length < 60 || ltf.length < 30) continue;
 
       const state = await ctx.runQuery(internal.battle.getState, { key });
-      const res = evaluateBattle(
-        htf,
-        mtf,
-        ltf,
-        state?.firedZone ?? "",
-        now,
-        EXCHANGE,
-        symbol,
-      );
 
-      await ctx.runMutation(internal.battle.upsertState, {
-        key,
-        firedZone: res.firedZone,
-        updatedAt: now,
-      });
+      // 信号失效跟踪：上一笔未了结的信号若已扫止损（收盘穿过）或到止盈（触及），解除布防。
+      let firedZone = state?.firedZone ?? "";
+      let openDir = state?.openDir ?? null;
+      let openStop = state?.openStop ?? null;
+      let openTarget = state?.openTarget ?? null;
+      let openTs = state?.openTs ?? null;
+      if (firedZone && openTs && openDir) {
+        if (hitStopOrTarget(ltf, openTs, openDir, openStop, openTarget)) {
+          firedZone = "";
+          openDir = null;
+          openStop = null;
+          openTarget = null;
+          openTs = null;
+        }
+      }
+
+      const res = evaluateBattle(htf, mtf, ltf, firedZone, now, EXCHANGE, symbol);
 
       if (res.signal) {
+        firedZone = res.firedZone;
+        openDir = res.signal.bias;
+        openStop = res.signal.stopPrice;
+        openTarget = res.signal.targetPrice;
+        openTs = now;
         await ctx.runMutation(internal.battle.insertSignals, {
           signals: [{ exchange: EXCHANGE, symbol, createdAt: now, ...res.signal }],
         });
         await sendTelegram(res.signal.text);
         fired++;
+      } else if (!res.firedZone) {
+        // 未在区内（离开/未到）→ 一并清空未了结信号
+        firedZone = "";
+        openDir = null;
+        openStop = null;
+        openTarget = null;
+        openTs = null;
       }
+
+      await ctx.runMutation(internal.battle.upsertState, {
+        key,
+        firedZone,
+        openDir,
+        openStop,
+        openTarget,
+        openTs,
+        updatedAt: now,
+      });
     }
 
     console.log(`battle scan: fired=${fired}`);
@@ -98,6 +144,7 @@ export const sendSample = internalAction({
       buildMessage(
         "gate",
         "BTC",
+        "bear",
         "bear",
         "CHoCH",
         82236.7,
@@ -132,6 +179,10 @@ export const upsertState = internalMutation({
   args: {
     key: v.string(),
     firedZone: v.string(),
+    openDir: v.union(v.string(), v.null()),
+    openStop: v.union(v.number(), v.null()),
+    openTarget: v.union(v.number(), v.null()),
+    openTs: v.union(v.number(), v.null()),
     updatedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -148,6 +199,7 @@ const signalValidator = v.object({
   exchange: v.string(),
   symbol: v.string(),
   bias: v.string(),
+  bg: v.string(),
   htfTag: v.string(),
   htfLevel: v.number(),
   zoneKind: v.string(),

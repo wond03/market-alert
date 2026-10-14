@@ -183,7 +183,7 @@ export function currentSessionName(now: number): string | null {
   return best;
 }
 
-// 该时段本地时钟在上次走到 s.start 时的 UTC 秒时间戳（用于「盘口」新鲜度比较）。
+// 该时段本地时钟在上次走到 s.start 时的 UTC 秒时间戳。
 function sessionStartBefore(now: number, s: Session): number {
   const locNow = tzMinutes(now, s.tz);
   let delta = locNow - s.start;
@@ -191,16 +191,49 @@ function sessionStartBefore(now: number, s: Session): number {
   return now - delta * 60;
 }
 
-// 「方向新鲜度」截止时刻：允许的最早结构事件时间 = 上一时段开始时刻。
-// 结构事件早于该时刻即视为过时（方向失效）。当前处于时段间隙时，取最近一个已开始时段的开始时刻。
-export function staleBefore(now: number): number {
+function sessionDurSec(s: Session): number {
+  let dur = s.end - s.start;
+  if (dur <= 0) dur += 1440; // 跨午夜
+  return dur * 60;
+}
+
+// 当前（或最近一个已开始）时段的开始时刻；处在时段间隙时取三个时段里最近的一次开始。
+export function currentSessionStart(now: number): number {
   const cur = currentSessionName(now);
   if (cur) {
-    const prevName = SESSION_PREV[cur];
-    const s = SESSIONS.find((x) => x.name === prevName);
+    const s = SESSIONS.find((x) => x.name === cur);
     if (s) return sessionStartBefore(now, s);
   }
   return Math.max(...SESSIONS.map((s) => sessionStartBefore(now, s)));
+}
+
+// 当前北京时间「当天 00:00」的 UTC 秒；用于 15m 日内方向「当天有效」的新鲜度判断。
+export function currentDayStart(now: number): number {
+  return Math.floor((now + BJ_OFFSET) / 86400) * 86400 - BJ_OFFSET;
+}
+
+// 当前进行的时段窗口（含名称）；不在任何时段内（间隙）返回 null。
+export function currentSessionWindow(
+  now: number,
+): { name: string; start: number; end: number } | null {
+  const cur = currentSessionName(now);
+  if (!cur) return null;
+  const s = SESSIONS.find((x) => x.name === cur);
+  if (!s) return null;
+  const start = sessionStartBefore(now, s);
+  return { name: cur, start, end: start + sessionDurSec(s) };
+}
+
+// 指定时段「最近一次已结束」的窗口（UTC 秒）；用于取上一个盘口的高低。
+export function lastClosedSessionWindow(
+  now: number,
+  name: string,
+): { start: number; end: number } {
+  const s = SESSIONS.find((x) => x.name === name) ?? SESSIONS[0];
+  const start = sessionStartBefore(now, s);
+  const dur = sessionDurSec(s);
+  const base = start + dur > now ? start - 86400 : start;
+  return { start: base, end: base + dur };
 }
 
 // 找出「最近一个已结束的交易时段」的高/低（跳过仍在进行中的那个）。
