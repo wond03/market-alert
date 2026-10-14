@@ -1,4 +1,4 @@
-// SMC 作战面板信号 —— 价格进入合格入区时推送 Telegram（只提示，不交易）。
+// SMC 入场信号 —— 价格进入合格入区且出现低周期 5m 同向确认时推送 Telegram（只提示，不交易）。
 // 口径见 ./battleCore（纯逻辑，与看盘页「作战面板」/ ./luxSmc 同一套判定）。
 //
 // 仅在设置 BATTLE=1 的部署上运行（prod）。
@@ -212,6 +212,8 @@ export const sendSample = internalAction({
         "BTC",
         "bear",
         "bear",
+        "BOS",
+        84100,
         "CHoCH",
         82236.7,
         { kind: "OB", bias: "bear", top: 83400, bottom: 83250, idx: 0, t: now },

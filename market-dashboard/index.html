@@ -2157,7 +2157,7 @@
   }
 
   /* ================= SMC 作战面板 =================
-     脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 价格进入入区即提示（低周期确认仅展示）→ 区域外止损 → 前高前低/流动性止盈。
+     脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 价格进入入区且出现低周期同向确认才提示 → 区域外止损 → 前高前低/流动性止盈。
      跨周期取数（方向 / 区域 / 入场），结构判定复用同页 smc* 函数（与 luxSmc 一致）。 */
   var BT_KEY = "market-dashboard:battle:v1";
   var btState = btLoad();
@@ -2248,7 +2248,7 @@
     var confirmed = recentBreak || eng || pin;
     var kind = recentBreak ? (lb.tag + (lb.dir === "bull" ? "向上" : "向下")) : (eng ? "吞没" : (pin ? "Pin Bar" : ""));
     var state;
-    if (inZone) state = confirmed ? ("已到区域（低周期 " + btIvLabel(ltfIv) + " 确认：" + kind + "）") : ("已到区域（未出现低周期确认，非必须，进入入区即提示）");
+    if (inZone) state = confirmed ? ("已到区域（" + btIvLabel(ltfIv) + " 同向确认：" + kind + "，可入场）") : ("已到区域，等待 " + btIvLabel(ltfIv) + " 同向确认（未确认不提示）");
     else state = "价格未到入区，等待回踩";
     return { state: state, tone: inZone ? bias : "", inZone: inZone, confirmed: !!confirmed, kind: kind, ltfBreak: lb };
   }
@@ -2431,7 +2431,7 @@
     out.push('<div class="bt-blk"><div class="bt-blk-title">低周期确认 <span class="bt-tag">' + btIvLabel(x.ltfIv) + '</span></div>' +
       row("当前状态", x.trig.state, x.trig.tone) +
       row("低周期最近结构", x.trig.ltfBreak ? (x.trig.ltfBreak.tag + " " + (x.trig.ltfBreak.dir === "bull" ? "上" : "下")) : "—") +
-      row("确认信号", x.trig.confirmed ? ("有（" + x.trig.kind + "）") : "无（非必须；进入入区即提示）") +
+      row("确认信号", x.trig.confirmed ? ("有（" + x.trig.kind + "）") : "无（需低周期同向确认才提示）") +
       "</div>");
 
     var r = x.risk;
@@ -2452,7 +2452,7 @@
     ck(x.zones.length ? x.zones[0].fresh : null, "区域是否新鲜（方向周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? (x.zones[0].fresh ? "是（未被测试过）" : "否（已测试 " + x.zones[0].touched + " 次）") : "—");
     ck(x.zones.length > 0, "位移支撑（方向周期 " + btIvLabel(x.mtfIv) + "）", x.zones.length ? "有（入区形成后 10 根内出现 ≥1.5×ATR 的同向K线）" : "—");
     ck((up || dn) ? x.sweep.swept : null, "流动性（背景周期 " + btIvLabel(x.htfIv) + "）", (up || dn) ? (x.sweep.swept ? ("已扫前" + (up ? "低" : "高") + " " + f(x.sweep.level) + "，属更高质量背景") : "未扫到前高/前低，属一般背景") : "—");
-    ck(x.trig.confirmed ? true : null, "低周期确认（" + btIvLabel(x.ltfIv) + "）", x.trig.confirmed ? (x.trig.kind + "，出现在区域内") : "暂无（进入入区即提示，非必须）");
+    ck(x.trig.confirmed ? true : null, "低周期确认（" + btIvLabel(x.ltfIv) + "）", x.trig.confirmed ? (x.trig.kind + "，出现在区域内") : "暂无（需低周期同向确认，进区未确认不提示）");
     ck(r ? true : null, "止损（方向周期 " + btIvLabel(x.mtfIv) + "）", r ? (f(r.stop) + "，在区域外（0.2×ATR 缓冲）") : "—");
     ck(r && r.rr != null ? (r.rr >= 2) : null, "盈亏比（方向周期 " + btIvLabel(x.mtfIv) + "）", r && r.rr != null ? ("1:" + r.rr.toFixed(2) + (r.rr < 2 ? "（低于 1:2，偏薄）" : "")) : "—");
     out.push('<div class="bt-blk"><div class="bt-blk-title">交易前检查清单</div>' + chk.join("") + "</div>");

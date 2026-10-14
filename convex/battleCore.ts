@@ -2,7 +2,7 @@
 // K 线复算，保证线上信号与看盘页「作战面板」判定一致。
 //
 // 口径：MTF(15m) 结构定日内方向（1h 仅作背景，被反向收盘破坏即作废）→ MTF(15m) 顺方向、未缓解且带
-// 位移的 OB/FVG 为入区 → 价格进入该入区即提示（低周期 5m 确认仅作展示、不作门槛）→ 输出入场/止损/止盈/盈亏比。
+// 位移的 OB/FVG 为入区 → 价格进入该入区且出现低周期 5m 同向确认（结构突破/吞没/Pin Bar）才提示 → 输出入场/止损/止盈/盈亏比。
 // 止盈：距入场 ≥TARGET_MIN_RR×风险 的最近对手流动性（1h 摆动点 + 前日/亚洲/开盘区间高低）。
 
 import type { Candle } from "./exchanges";
@@ -264,6 +264,8 @@ export function buildMessage(
   symbol: string,
   bias: Bias,
   bg: string,
+  bgTag: string,
+  bgLevel: number,
   htfTag: string,
   htfLevel: number,
   zone: Zone,
@@ -280,21 +282,26 @@ export function buildMessage(
   const dirCn = bias === "bull" ? "看涨" : "看跌";
   const dirWord = bias === "bull" ? "向上" : "向下";
   const tradeCn = bias === "bull" ? "做多" : "做空";
-  const bgCn = bg === "bull" ? "偏多" : bg === "bear" ? "偏空" : "震荡";
+  const bgCn = bg === "bull" ? "看涨" : bg === "bear" ? "看跌" : "震荡";
   const exName = gate.EXCHANGE_NAME[exchange] ?? exchange;
   const sess = gate.currentSessionName(now) ?? "时段间隙";
   const sep = "━━━━━━━━━━";
   const liq = sweepSwept
     ? `已扫前${bias === "bull" ? "低" : "高"} ${gate.fmtPrice(sweepLevel!)}`
     : "无明显扫荡";
+  const bgLine =
+    bgTag && bgLevel
+      ? `${bgCn} · ${bgTag} ${dirWord}破 ${gate.fmtPrice(bgLevel)}`
+      : bgCn;
   return (
-    `<b>SMC 作战信号</b> · 进入入区（即入场信号）\n` +
+    `<b>SMC 入场信号</b>\n` +
     `<b>${exName} · ${symbol}/USDT</b>\n` +
     `${sep}\n` +
-    `方向（${MTF.tf}）：<b>${dirCn}</b> ｜ ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
-    `背景（${HTF.tf}）：${bgCn}\n` +
-    `入区（${MTF.tf}）：<b>${zone.kind}</b> ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
-    `流动性：${liq} ｜ 确认（${LTF.tf}，仅参考）：<b>${confirm || "暂无"}</b>\n` +
+    `背景 ${HTF.tf}　${bgLine}\n` +
+    `方向 ${MTF.tf}　${dirCn} · ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
+    `入区 ${MTF.tf}　${zone.kind} ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
+    `流动性　　${liq}\n` +
+    `确认 ${LTF.tf}　<b>${confirm}</b>\n` +
     `${sep}\n` +
     `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
     `止损 <b>${gate.fmtPrice(stop)}</b>（${(stopPct * 100).toFixed(2)}%）\n` +
@@ -304,7 +311,7 @@ export function buildMessage(
         (rr === null ? `` : `　盈亏比 <b>1:${rr.toFixed(2)}</b>`) +
         `\n`) +
     `${sep}\n` +
-    `${gate.fmtBeijing(now)} 北京（${sess}） ｜ <a href="${gate.DASHBOARD_URL}">看盘页</a>`
+    `${gate.fmtBeijing(now)} 北京（${sess}）　｜　<a href="${gate.DASHBOARD_URL}">看盘页</a>`
   );
 }
 
@@ -379,14 +386,19 @@ export function evaluateBattle(
   const prev = ltf[ltf.length - 2];
   const eng = isEngulf(prev, last, bias);
   const pin = isPin(last, bias);
-  // 低周期确认仅作展示，不再作为推送门槛（价格进入合格入区即提示）。
+  const dirWord = bias === "bull" ? "向上" : "向下";
+  // 入场信号：进入合格入区且出现低周期 5m 同向确认（结构突破 / 吞没 / Pin Bar）才提示。
   const confirm = recentBreak
-    ? `${lb!.tag}${lb!.dir === "bull" ? "向上" : "向下"}`
+    ? `${lb!.tag} ${dirWord} 破 ${gate.fmtPrice(lb!.level)}`
     : eng
       ? "吞没"
       : pin
         ? "Pin Bar"
         : "";
+  if (!confirm) {
+    // 已到入区但尚无低周期同向确认：不推送，保持布防等待确认。
+    return { bias, firedZone, signal: null };
+  }
 
   const zoneKey = `${bias}#${inZone.kind}#${inZone.idx}#${inZone.bottom}#${inZone.top}`;
   if (firedZone === zoneKey) {
@@ -396,6 +408,9 @@ export function evaluateBattle(
   const risk = buildRisk(bias, inZone, htfSt, price, ltfAtr, intradayLevels(mtf, now));
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : inZone.top;
+  const bgOk = bg === "bull" || bg === "bear";
+  const bgTag = bgOk && htfLast ? htfLast.tag : "";
+  const bgLevel = bgOk && htfLast ? htfLast.level : 0;
   return {
     bias,
     firedZone: zoneKey,
@@ -420,6 +435,8 @@ export function evaluateBattle(
         symbol,
         bias,
         bg,
+        bgTag,
+        bgLevel,
         dirTag,
         dirLevel,
         inZone,
