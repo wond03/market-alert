@@ -83,6 +83,7 @@ export default defineSchema({
     zoneTop: v.number(),
     zoneBottom: v.number(),
     confirm: v.string(), // 低周期确认：CHoCH/BOS 向上/向下 | 吞没 | Pin Bar
+    confirmInternal: v.optional(v.string()), // 15m 内部结构确认（回调结束）：CHoCH | BOS
     entryPrice: v.number(),
     stopPrice: v.number(),
     targetPrice: v.union(v.number(), v.null()),

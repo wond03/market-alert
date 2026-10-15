@@ -69,7 +69,7 @@
 - Context: Discovered by Agent while building the battle panel and removing the MTF SMC system
 - Category: Operations & Deployment
 - Instructions:
-  - 作战面板 `convex/battle.ts`（纯逻辑 `convex/battleCore.ts`，复用 `luxSmc`）：1h 结构(size=50)只作背景偏置门 → 15m **摆动结构**（`MTF_DIR_SWING=SWING_LEN=8`）的 BOS/CHoCH 定日内方向（必须收盘确认，影线不算；方向不明确=range 则观望，不用内部结构硬定）→ 入区只用 15m **摆动结构**未缓解 OB/FVG（内部结构 OB/FVG 不单独算入区，只作回调确认/微调）→ 5m 价格在区内且出现同向确认（CHoCH/BOS/吞没/Pin Bar）→ 入库 + Telegram。只推「低周期确认入场」一种事件。规则：方向更新只有摆动结构出现反向 BOS/CHoCH 才发生，内部结构反向只视为回调、不反手（内部结构可累积最终触发摆动结构改变）。
+  - 作战面板 `convex/battle.ts`（纯逻辑 `convex/battleCore.ts`，复用 `luxSmc`）：1h 结构(size=50)只作背景偏置门 → 15m **摆动结构**（`MTF_DIR_SWING=SWING_LEN=8`）的 BOS/CHoCH 定日内方向（必须收盘确认，影线不算；方向不明确=range 则观望，不用内部结构硬定）→ 入区只用 15m **摆动结构**未缓解 OB/FVG（内部结构 OB/FVG 不单独算入区，只作回调确认/微调）→ 5m 价格在区内且出现同向确认（CHoCH/BOS/吞没/Pin Bar）。**两层确认链**：确认 1 = 15m 内部结构（`INTERNAL_LEN=4`）出现同向 CHoCH/BOS（回调结束，`INTERNAL_CONFIRM_LOOKBACK=3` 根内）；确认 2 = 5m 扣扳机（结构突破/吞没/Pin Bar）。两层都满足才入库 + Telegram，卡片显示「确认 15m / 确认 5m」两行。只推「双层确认入场」一种事件。规则：方向更新只有摆动结构出现反向 BOS/CHoCH 才发生，内部结构反向只视为回调、不反手（内部结构可累积最终触发摆动结构改变）。
   - 表：`battleState`(key=gate:SYMBOL, firedZone)、`battleSignals`；cron `battle signal` 每 1 分钟；开关 `BATTLE=1`（仅 prod）。去重：同一区域「离开后重进」才再推。手动：`battle:scan`、`battle:recentBattleSignals`。看盘页「作战面板」为同口径前端镜像。
   - 原独立 MTF SMC 系统 `convex/mtfSmc.ts` 及表 `mtfSmcState`/`mtfSmcSignals` 已于 2026-10-14 移除（与 battle 推送重复）：cron/开关/文件已删、prod 已清库并部署；`npx convex run mtfSmc:*` 不再有效。
 

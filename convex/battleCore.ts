@@ -23,6 +23,7 @@ export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
 export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
+export const INTERNAL_CONFIRM_LOOKBACK = 3; // 最近 N 根 15m 内部结构的同向突破算「确认 1」
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
@@ -50,6 +51,7 @@ export type BattleSignal = {
   zoneTop: number;
   zoneBottom: number;
   confirm: string;
+  confirmInternal: string;
   entryPrice: number;
   stopPrice: number;
   targetPrice: number | null;
@@ -269,6 +271,7 @@ export function buildMessage(
   htfLevel: number,
   zone: Zone,
   confirm: string,
+  confirmInternal: string,
   entry: number,
   stop: number,
   stopPct: number,
@@ -300,6 +303,7 @@ export function buildMessage(
     `方向 ${MTF.tf}　${dirCn} · ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
     `入区 ${MTF.tf}　${zone.kind} ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
     `流动性　　${liq}\n` +
+    `确认 ${MTF.tf}　<b>${confirmInternal}</b>\n` +
     `确认 ${LTF.tf}　<b>${confirm}</b>\n` +
     `${sep}\n` +
     `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
@@ -359,6 +363,11 @@ export function evaluateBattle(
   const price = ltf[ltf.length - 1].c;
   const ltfAtr = atr(ltf, 14)[ltf.length - 1] || price * 0.002;
   const zones = battleZones(mtf, bias);
+  // 确认 1（15m 内部结构）：摆动结构定方向后，要求内部结构出现同向 CHoCH/BOS，代表回调结束。
+  const mtfInternal = runStructure(mtf, INTERNAL_LEN);
+  const ib = mtfInternal.breaks.length ? mtfInternal.breaks[mtfInternal.breaks.length - 1] : undefined;
+  const internalConfirm = !!ib && ib.dir === bias && mtf.length - 1 - ib.idx <= INTERNAL_CONFIRM_LOOKBACK;
+  const confirmInternal = internalConfirm ? (ib!.tag === "CHoCH" ? "CHoCH" : "BOS") : "";
   const buf = ZONE_BUF_ATR * ltfAtr;
 
   let inZone: Zone | null = null;
@@ -394,8 +403,8 @@ export function evaluateBattle(
       : pin
         ? "Pin Bar"
         : "";
-  if (!confirm) {
-    // 已到入区但尚无低周期同向确认：不推送，保持布防等待确认。
+  if (!confirm || !internalConfirm) {
+    // 确认链不完整（15m 内部未结束回调 或 5m 未扣扳机）：不推送，保持布防等待确认。
     return { bias, firedZone, signal: null };
   }
 
@@ -422,6 +431,7 @@ export function evaluateBattle(
       zoneTop: inZone.top,
       zoneBottom: inZone.bottom,
       confirm,
+      confirmInternal,
       entryPrice: risk.entry,
       stopPrice: risk.stop,
       targetPrice: risk.target,
@@ -440,6 +450,7 @@ export function evaluateBattle(
         dirLevel,
         inZone,
         confirm,
+        confirmInternal,
         risk.entry,
         risk.stop,
         risk.stopPct,
