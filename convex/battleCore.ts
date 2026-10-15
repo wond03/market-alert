@@ -21,7 +21,7 @@ import * as gate from "./gate";
 export const HTF = { tf: "1h", sec: 3600, swing: SWING_LEN }; // 背景：只定偏置与流动性
 export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
-export const MTF_DIR_SWING = INTERNAL_LEN; // 15m 日内方向的结构 size（内部结构）
+export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
