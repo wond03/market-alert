@@ -79,10 +79,9 @@ export function hasDisplacement(
 
 export function battleZones(candles: Candle[], bias: Bias): Zone[] {
   const swing = runStructure(candles, SWING_LEN);
-  const internal = runStructure(candles, INTERNAL_LEN);
   const atrArr = atr(candles, ATR_LEN);
   const zones: Zone[] = [];
-  for (const o of swing.orderBlocks.concat(internal.orderBlocks)) {
+  for (const o of swing.orderBlocks) {
     if (o.mitigatedIdx === null && o.bias === bias) {
       zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
     }
