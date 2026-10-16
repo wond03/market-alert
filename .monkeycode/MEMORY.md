@@ -99,3 +99,9 @@
   - 看盘页 `market-dashboard/index.html` 的 SMC 叠加、盘面读数与作战面板读数全部走后端 `convex/panel.ts`（`panel:analyze` / `panel:battleStatus`）。改前端后必须 `npm run convex:deploy` 部署后端，否则看盘页叠加/作战面板会报接口不存在。
   - 看盘页已移除告警规则管理（原 `rulesAdmin`/`RULES_SECRET`）与告警只读展示（原 `market:recentAlerts`）；线A 通用告警已于 2026-10-17 整体移除（含 `rules`/`ruleState`/`scanState`/`alerts` 表、`market poll` cron、后端 WEEX/OKX）。
   - 排查大文件：opentoken 会把 bash 输出做符号压缩（`$N=` 图例）、把 read/grep 输出卸载；原文在 `~/.config/opentoken/offload/<id>.txt`。用 `node -e` 按行号打印小片段最稳，编辑大 HTML 建议写 node 补丁脚本按行号增删。
+
+[User Instruction Summary]
+- Date: 2026-10-17
+- Context: 用户要求「每个产品和项目都需要有说明文档」
+- Instructions:
+- 每个产品/项目都需维护说明文档；本项目说明文档位于 `.monkeycode/docs/`（`INDEX.md`、`ARCHITECTURE.md`、`INTERFACES.md`、`DEVELOPER_GUIDE.md`，以及 `专有概念/`、`模块/` 子目录），代码改动后同步更新。
