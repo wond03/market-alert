@@ -102,3 +102,12 @@
   - 2026-10-14 精简：全局技能 46→12（停用 34 个，移至 `~/.config/opencode/skills-disabled/`，`mv` 回 `skills/` 即还原）；停用 6 条与本项目无关的规则（`go-mod-credential-fix`/`git-submodule-check`/`submodule-commit-workflow`/`vite-allowedhosts-config`/`frontend-reverse-proxy`/`global-package-install`，移至 `/root/.codingmatrix/project-tpl/.ai-ready/rules-disabled/`，`instructions` 的 `rules/*.md` glob 不再匹配，可 `mv` 还原）。新增项目级 `/workspace/AGENTS.md`。
   - opentoken：插件 `/root/.config/opencode/plugins/opentoken.ts`（+ `opentoken/` 源码依赖，核心 `@mrgray17/opentoken-core`）；TUI 小部件未启用（`~/.config/opencode/tui.json` 已移除 `plugin` 条目，避免未锁版 `@latest` 与带漏洞的 solid/seroval 依赖）；安装需 `npm install --legacy-peer-deps`。验证 `/root/.codingmatrix/bin/opencode-167e55c83ed7/opencode debug config` 打印 `[OpenToken] INFO Loaded`；`opentoken_stats`/`opentoken_health` 看节省。
   - opentoken 读取边界：默认 `safeReadRoot` 空=仅项目目录（读写项目外被 `Path traversal blocked` 拦截）；已在 `~/.config/opentoken/config.json` 写 `{"safeReadRoot":"/"}` 解除（`HOME=/root`、`XDG_CONFIG_HOME` 未设）。注意 progressive disclosure 阈值写死为 5 行/512 字节（`progressive.ts`），会把 `read`/`grep`/`glob` 输出卸载为摘要，原文存于 `~/.config/opentoken/offload/<id>.txt`，配置不可调。配置改动需重启 opencode。
+
+[Project Knowledge Summary]
+- Date: 2026-10-16
+- Context: Discovered by Agent while 解耦看盘页
+- Category: Operations & Deployment
+- Instructions:
+  - 看盘页 `market-dashboard/index.html` 的 SMC 叠加、盘面读数与作战面板读数全部走后端 `convex/panel.ts`（`panel:analyze` / `panel:battleStatus`）。改前端后必须 `npm run convex:deploy` 部署后端，否则看盘页叠加/作战面板会报接口不存在。
+  - 看盘页已移除告警规则管理（`rulesAdmin:upsertRule/deleteRule/setEnabled`、RULES_SECRET 输入），仅只读 `market:recentAlerts`；规则改由后端/脚本维护。
+  - 排查大文件：opentoken 会把 bash 输出做符号压缩（`$N=` 图例）、把 read/grep 输出卸载；原文在 `~/.config/opentoken/offload/<id>.txt`。用 `node -e` 按行号打印小片段最稳，编辑大 HTML 建议写 node 补丁脚本按行号增删。

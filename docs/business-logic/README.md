@@ -69,7 +69,8 @@ mindmap
 | 后端 | 线B 作战面板 battle | 唯一入场信号 | 见下表 3 | `convex/battle.ts` |
 | 后端 | 线C 周报 | battle 近 7 天体检 | 周一推送 | `convex/report.ts` |
 | 后端 | 纯逻辑库 | luxSmc / battleCore | 无 Convex 依赖，回测共用 | `convex/luxSmc.ts`、`convex/battleCore.ts` |
-| 前端 | 看盘页 | 单文件静态页 | 见下表 6 | `market-dashboard/index.html` |
+| 后端 | 看盘只读接口 | panel:analyze / panel:battleStatus | 看盘页唯一计算入口 | `convex/panel.ts` |
+| 前端 | 看盘页 | 单文件静态页 | 计算走后端 panel:*，见下表 6 | `market-dashboard/index.html` |
 | 研究层 | backtest | 策略验证 | 不产线，见下表 7 | `backtest/*.ts` |
 | 调度 | crons + env | 3 个定时任务 + 开关 | 见下表 5 | `convex/crons.ts` |
 
@@ -77,7 +78,7 @@ mindmap
 
 | 项 | 内容 | 代码位置 |
 |---|---|---|
-| 规则存储 | `rules` 表，看盘页写入 | `convex/schema.ts` |
+| 规则存储 | `rules` 表 | `convex/schema.ts` |
 | 规则类型 | `cross_up` / `cross_down` / `breakout` | `convex/rulesAdmin.ts` |
 | 关键位 | breakthrough 取前一已结束时段 high/low；cross 取固定 price | `convex/gate.ts:241` `resolveLevel` |
 | 轮询 | 每分钟，cross 用 1m、breakout 用 15m 收盘 | `convex/alerts.ts:49` `pollAndCheck` |
@@ -131,10 +132,10 @@ mindmap
 | 功能 | 内容 |
 |---|---|
 | 图表 | 多窗格 K 线（lightweight-charts），交易所 REST 历史 + WSS 实时 |
-| 叠加 | BOS/CHoCH、OB、FVG、扫单、时段框 |
+| 叠加 | BOS/CHoCH、OB、FVG、扫单、时段框（数据来自 `panel:analyze`） |
 | 指标 | MACD、RSI、KDJ 及指标注册表 |
-| 弹窗1 | 警报设置（增删规则、启停、写 secret） |
-| 弹窗2 | SMC 作战面板（日内方向、最近信号、最近了结、检查清单） |
+| 弹窗1 | 警报（只读最近触发，规则管理不在看盘页） |
+| 弹窗2 | SMC 作战面板（日内方向、最近信号、最近了结、检查清单；读数来自 `panel:battleStatus`） |
 | 数据 | 一次性 HTTP POST，硬编码 prod Convex URL（非订阅/非轮询） |
 | 托管 | GitHub Pages，push `master` 且改 `market-dashboard/**` 触发 |
 

@@ -122,7 +122,6 @@
   .rf-actions { width: 100%; display: flex; gap: 8px; margin-top: 4px; }
   .rf-actions button, .rule-ops button { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; }
   .rf-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  #alertSecret { width: 150px; }
   .rule-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
   .rule-row:last-child { border-bottom: 0; }
   .rule-desc { font-size: 12px; }
@@ -231,33 +230,6 @@
       </div>
     </div>
     <div class="modal-body" id="alertBody">
-      <div class="alert-sec">
-        <label>写入口令 <input id="alertSecret" type="password" placeholder="RULES_SECRET"><span class="alert-msg" id="alertMsg"></span></label>
-      </div>
-      <div class="alert-sec">
-        <div class="alert-sec-title">新增 / 编辑规则</div>
-        <div class="rule-form">
-          <label>交易所 <select id="rfExchange"><option value="gate">Gate</option><option value="weex">WEEX</option><option value="okx">OKX</option></select></label>
-          <label>品种 <select id="rfSymbol"><option value="BTC">BTC/USDT</option><option value="XAU">XAU/USDT</option></select></label>
-          <label>类型 <select id="rfType"><option value="cross_up">价格上破</option><option value="cross_down">价格下破</option><option value="breakout">突破</option></select></label>
-          <label class="rf-price">价位 <input id="rfPrice" type="number" step="any" placeholder="如 80000"></label>
-          <label class="rf-break rf-tf">周期 <select id="rfTf"><option value="15m">15分钟</option><option value="1h">1小时</option><option value="4h">4小时</option><option value="1d">日</option></select></label>
-          <label class="rf-break rf-tf">偏移 <input id="rfOffset" type="number" min="1" step="1" value="2"></label>
-          <label class="rf-break">取 <select id="rfField"><option value="high">前高</option><option value="low">前低</option></select></label>
-          <label class="rf-break">方向 <select id="rfDir"><option value="up">上破</option><option value="down">下破</option></select></label>
-          <label>备注 <input id="rfLabel" type="text" placeholder="自动"></label>
-          <label>启用 <input id="rfEnabled" type="checkbox" checked></label>
-          <div class="rf-actions">
-            <button class="primary" id="rfSave">添加规则</button>
-            <button id="rfCancel" style="display:none">取消编辑</button>
-          </div>
-        </div>
-        <div class="alert-hint">「突破」类规则统一按 <b>15 分钟 K 线</b> 判定：收盘站上/跌破关键位为「实体突破」，仅有最高/最低触及而未收盘突破为「影线突破」，两种都会推送并在文案里标注。下面的「周期/偏移 / 取 / 方向」用于计算「前N根K线」的关键位。</div>
-      </div>
-      <div class="alert-sec">
-        <div class="alert-sec-title">现有规则</div>
-        <div id="ruleList"><div class="alert-empty">加载中…</div></div>
-      </div>
       <div class="alert-sec">
         <div class="alert-sec-title">最近触发</div>
         <div id="alertList"><div class="alert-empty">加载中…</div></div>
@@ -924,163 +896,32 @@
     });
   }
 
-  /* ================= SMC 结构（Smart Money Concepts [LuxAlgo] 移植） ================= */
-  /* 逐条对照官方开源 Pine 脚本（CC BY-NC-SA 4.0, © LuxAlgo，「Smart Money Concepts [LuxAlgo]」）
-     移植，判定与 convex/luxSmc.ts 完全一致：
-       - 摆动点：leg(size) —— high[size] > highest(size) 视为新腿高、low[size] < lowest(size) 为新腿低；
-         leg 0→1 = 刚确认摆动低点、1→0 = 刚确认摆动高点。摆动结构 size=50，内部结构 size=5。
-       - 结构 BOS/CHoCH：收盘价上/下穿最近一个尚未被穿过的摆动高/低点；
-         上穿时原趋势为跌 → CHoCH，否则 → BOS（反之下穿同理）。
-       - 订单块(OB)：结构突破时，在「摆动点 bar → 当前 bar」区间内取 parsedLow 最小(看涨)/
-         parsedHigh 最大(看跌)的整根 K；parsedHigh/Low 含高波动 K 过滤；右侧延伸至被缓解。
-       - FVG：low[0] > high[2] 且 close[1] > high[2] 且中间 K 实体% > 自适应阈值（看跌对称）。
-       - EQH/EQL：size=3 摆动点相邻价差 < 0.1×ATR(200)。
-       - 溢价/折价区 + 强/弱高、强/弱低：由 trailing 极值给出。 */
-  var SMC_EQ_THRESH = 0.1, SMC_ATR_LEN = 200;
-
-  function smcClampInt(v, lo, hi, def) {
-    var n = parseInt(v, 10);
-    if (!isFinite(n)) n = def;
-    return Math.max(lo, Math.min(hi, n));
-  }
-  function smcTrueRange(d) {
-    var tr = new Array(d.length);
-    for (var i = 0; i < d.length; i++) {
-      if (i === 0) { tr[i] = d[i].high - d[i].low; continue; }
-      tr[i] = Math.max(d[i].high - d[i].low, Math.abs(d[i].high - d[i - 1].close), Math.abs(d[i].low - d[i - 1].close));
-    }
-    return tr;
-  }
-  function smcAtr(d, period) {
-    var tr = smcTrueRange(d), n = d.length, out = new Array(n), sum = 0;
-    for (var i = 0; i < n; i++) {
-      if (i < period) { sum += tr[i]; out[i] = (i === period - 1) ? sum / period : NaN; continue; }
-      out[i] = (out[i - 1] * (period - 1) + tr[i]) / period;
-    }
-    if (n < period) { var acc = 0; for (i = 0; i < n; i++) { acc += tr[i]; out[i] = acc / (i + 1); } }
-    var last = NaN;
-    for (i = 0; i < n; i++) { if (!isNaN(out[i])) last = out[i]; else if (!isNaN(last)) out[i] = last; }
-    return out;
-  }
-  function smcCmr(d) {
-    var tr = smcTrueRange(d), n = d.length, out = new Array(n), acc = 0;
-    for (var i = 0; i < n; i++) { acc += tr[i]; out[i] = i === 0 ? tr[i] : acc / i; }
-    return out;
-  }
-  function smcLegSeries(d, size) {
-    var n = d.length, legs = new Array(n), leg = 0;
-    for (var i = 0; i < n; i++) {
-      if (i >= size) {
-        var hiMax = -Infinity, loMin = Infinity;
-        for (var k = 0; k < size; k++) { var b = d[i - k]; if (b.high > hiMax) hiMax = b.high; if (b.low < loMin) loMin = b.low; }
-        if (d[i - size].high > hiMax) leg = 0; else if (d[i - size].low < loMin) leg = 1;
-      }
-      legs[i] = leg;
-    }
-    return legs;
-  }
-  function smcRunStructure(d, size, obFilter) {
-    var n = d.length, highs = [], lows = [], breaks = [], orderBlocks = [];
-    var legs = smcLegSeries(d, size);
-    var atrArr = smcAtr(d, SMC_ATR_LEN), cmrArr = smcCmr(d);
-    function volAt(i) { return obFilter === "range" ? cmrArr[i] : atrArr[i]; }
-    function parsedHigh(i) { var c = d[i]; var hv = c.high - c.low >= 2 * (isNaN(volAt(i)) ? Infinity : volAt(i)); return hv ? c.low : c.high; }
-    function parsedLow(i) { var c = d[i]; var hv = c.high - c.low >= 2 * (isNaN(volAt(i)) ? Infinity : volAt(i)); return hv ? c.high : c.low; }
-    var curHigh = { level: NaN, idx: -1, t: 0, crossed: false, prev: NaN };
-    var curLow = { level: NaN, idx: -1, t: 0, crossed: false, prev: NaN };
-    var trend = "range", prevClose = NaN;
-    for (var i = 0; i < n; i++) {
-      if (i >= 1 && legs[i] !== legs[i - 1]) {
-        var bi = i - size;
-        if (legs[i] === 1) {
-          curLow = { level: d[bi].low, idx: bi, t: d[bi].time, crossed: false, prev: curLow.level };
-          lows.push({ idx: bi, t: d[bi].time, price: d[bi].low, prevPrice: curLow.prev });
-        } else {
-          curHigh = { level: d[bi].high, idx: bi, t: d[bi].time, crossed: false, prev: curHigh.level };
-          highs.push({ idx: bi, t: d[bi].time, price: d[bi].high, prevPrice: curHigh.prev });
-        }
-      }
-      var close = d[i].close;
-      if (!isNaN(curHigh.level) && !isNaN(prevClose) && !curHigh.crossed && prevClose <= curHigh.level && close > curHigh.level) {
-        var tagH = trend === "bear" ? "CHoCH" : "BOS";
-        curHigh.crossed = true; trend = "bull";
-        breaks.push({ idx: i, time: d[i].time, dir: "bull", tag: tagH, level: curHigh.level, pivotIdx: curHigh.idx });
-        orderBlocks.push(smcMakeOB(d, curHigh.idx, i, "bull", parsedHigh, parsedLow));
-      }
-      if (!isNaN(curLow.level) && !isNaN(prevClose) && !curLow.crossed && prevClose >= curLow.level && close < curLow.level) {
-        var tagL = trend === "bull" ? "CHoCH" : "BOS";
-        curLow.crossed = true; trend = "bear";
-        breaks.push({ idx: i, time: d[i].time, dir: "bear", tag: tagL, level: curLow.level, pivotIdx: curLow.idx });
-        orderBlocks.push(smcMakeOB(d, curLow.idx, i, "bear", parsedHigh, parsedLow));
-      }
-      prevClose = close;
-    }
-    for (var o = 0; o < orderBlocks.length; o++) {
-      var ob = orderBlocks[o];
-      for (var k = ob.idx + 1; k < n; k++) {
-        if (ob.bias === "bull" ? d[k].low < ob.low : d[k].high > ob.high) { ob.mitigatedIdx = k; break; }
-      }
-    }
-    return { size: size, highs: highs, lows: lows, breaks: breaks, orderBlocks: orderBlocks, trendAtEnd: trend };
-  }
-  function smcMakeOB(d, pivotIdx, breakIdx, bias, parsedHigh, parsedLow) {
-    var start = Math.max(0, pivotIdx), end = breakIdx, bestIdx = start;
-    if (bias === "bull") {
-      var best = Infinity;
-      for (var k = start; k < end; k++) { var v = parsedLow(k); if (v < best) { best = v; bestIdx = k; } }
-    } else {
-      var best2 = -Infinity;
-      for (var k2 = start; k2 < end; k2++) { var v2 = parsedHigh(k2); if (v2 > best2) { best2 = v2; bestIdx = k2; } }
-    }
-    return { idx: bestIdx, t: d[bestIdx].time, high: parsedHigh(bestIdx), low: parsedLow(bestIdx), bias: bias, mitigatedIdx: null };
-  }
-  function smcFvgs(d) {
-    var n = d.length, out = [], cumAbs = 0, count = 0;
-    for (var i = 2; i < n; i++) {
-      var prev = d[i - 1], barDeltaPercent = (prev.close - prev.open) / (prev.open * 100);
-      count++; cumAbs += Math.abs(barDeltaPercent);
-      var threshold = (cumAbs / count) * 2;
-      var curLow = d[i].low, curHigh = d[i].high, last2High = d[i - 2].high, last2Low = d[i - 2].low, lastClose = prev.close;
-      if (curLow > last2High && lastClose > last2High && barDeltaPercent > threshold) out.push({ idx: i, top: curLow, bottom: last2High, dir: "bull", mitigatedIdx: null });
-      else if (curHigh < last2Low && lastClose < last2Low && -barDeltaPercent > threshold) out.push({ idx: i, top: last2Low, bottom: curHigh, dir: "bear", mitigatedIdx: null });
-    }
-    for (var f = 0; f < out.length; f++) {
-      for (var k = out[f].idx + 1; k < n; k++) { if (out[f].dir === "bull" ? d[k].low < out[f].bottom : d[k].high > out[f].top) { out[f].mitigatedIdx = k; break; } }
-    }
-    return out;
-  }
-  function smcEqhEql(d, size, threshold) {
-    var n = d.length, legs = smcLegSeries(d, size), atrArr = smcAtr(d, SMC_ATR_LEN), out = [];
-    var curHigh = { level: NaN, idx: -1 }, curLow = { level: NaN, idx: -1 };
-    for (var i = 1; i < n; i++) {
-      if (legs[i] === legs[i - 1]) continue;
-      var bi = i - size, eps = threshold * atrArr[i];
-      if (legs[i] === 1) {
-        if (!isNaN(curLow.level) && !isNaN(eps) && Math.abs(curLow.level - d[bi].low) < eps) out.push({ fromIdx: curLow.idx, toIdx: bi, price: curLow.level, kind: "EQL" });
-        curLow = { level: d[bi].low, idx: bi };
-      } else {
-        if (!isNaN(curHigh.level) && !isNaN(eps) && Math.abs(curHigh.level - d[bi].high) < eps) out.push({ fromIdx: curHigh.idx, toIdx: bi, price: curHigh.level, kind: "EQH" });
-        curHigh = { level: d[bi].high, idx: bi };
-      }
-    }
-    return out;
-  }
-  function smcTrailing(d, size) {
-    var n = d.length, legs = smcLegSeries(d, size);
-    var top = NaN, bottom = NaN, topIdx = -1, bottomIdx = -1;
-    for (var i = 0; i < n; i++) {
-      if (i >= 1 && legs[i] !== legs[i - 1]) {
-        var bi = i - size;
-        if (legs[i] === 1) { bottom = d[bi].low; bottomIdx = bi; }
-        else { top = d[bi].high; topIdx = bi; }
-      }
-      if (isNaN(top) || d[i].high > top) { top = d[i].high; topIdx = i; }
-      if (isNaN(bottom) || d[i].low < bottom) { bottom = d[i].low; bottomIdx = i; }
-    }
-    return { top: top, bottom: bottom, topIdx: topIdx, bottomIdx: bottomIdx };
-  }
-
-  /* ================= 盘面读数（只描述状态，不做买卖判断） ================= */
+  function clampInt(v, lo, hi, def) {
+  var n = parseInt(v, 10);
+  if (!isFinite(n)) n = def;
+  return Math.max(lo, Math.min(hi, n));
+}
+function candlesToApi(d) {
+  return (d || []).map(function (c) {
+    return { t: c.time, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume || 0 };
+  });
+}
+function ensureSmcData(entry) {
+  if (!entry || !entry.data || entry.data.length < 10) return;
+  var P = roReadParams();
+  var key = entry.data.length + ":" + entry.data[entry.data.length - 1].time + ":" + P.swing + ":" + P.internal;
+  if (entry.__smcKey === key) return;
+  entry.__smcKey = key;
+  convexAction("panel:analyze", { candles: candlesToApi(entry.data), swing: P.swing, internal: P.internal })
+    .then(function (res) {
+      if (entry.__smcKey !== key) return;
+      entry.panelData = res;
+      redrawOverlays(entry);
+      renderReadout(entry);
+    })
+    .catch(function () {});
+}
+/* ================= 盘面读数（只描述状态，不做买卖判断） ================= */
   function roEsc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
       return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
@@ -1146,14 +987,15 @@
     if (!d || d.length < 10) return null;
     var price = d[d.length - 1].close, dp = priceDp(price);
     var P = roReadParams();
-    var rows = [];
+    var pd = entry.panelData; if (!pd) { ensureSmcData(entry); return null; }
+ var rows = [];
 
-    var swRes = smcRunStructure(d, P.swing, "atr");
-    var inRes = smcRunStructure(d, P.internal, "atr");
+    var swRes = pd.swing;
+    var inRes = pd.internal;
     rows.push(roStructRow(d, "摆动结构(" + P.swing + ")", swRes));
     rows.push(roStructRow(d, "内部结构(" + P.internal + ")", inRes));
 
-    var tr = smcTrailing(d, P.swing);
+    var tr = pd.trail;
     if (isFinite(tr.top) && isFinite(tr.bottom) && tr.top > tr.bottom) {
       var pct = (price - tr.bottom) / (tr.top - tr.bottom);
       var zone = pct > 0.55 ? "溢价" : (pct < 0.45 ? "折价" : "均衡");
@@ -1165,7 +1007,7 @@
     rows.push({ k: "上方流动性", v: upLv === null ? "—" : fmt(upLv, dp) + "（" + roFmtPct((upLv - price) / price) + "）", tone: "down" });
     rows.push({ k: "下方流动性", v: dnLv === null ? "—" : fmt(dnLv, dp) + "（" + roFmtPct((dnLv - price) / price) + "）", tone: "up" });
 
-    var fvgs = smcFvgs(d).filter(function (f) { return f.mitigatedIdx === null; });
+    var fvgs = pd.fvgs.filter(function (f) { return f.mitigatedIdx === null; });
     var fUp = null, fDn = null;
     fvgs.forEach(function (f) {
       if (f.bottom >= price && (fUp === null || f.bottom < fUp)) fUp = f.bottom;
@@ -1223,8 +1065,8 @@
     var d = entry.data;
     if (!d || d.length < 30) return;
     var p = active.smc.params;
-    var swingLen = smcClampInt(p.swingLen, 5, 200, 8);
-    var internalLen = smcClampInt(p.internalLen, 2, 50, 4);
+    var pd = entry.panelData; if (!pd) { ensureSmcData(entry); return; } var swingLen = clampInt(p.swingLen, 5, 200, 8);
+    var internalLen = clampInt(p.internalLen, 2, 50, 4);
     var upCol = p.upColor || "#089981", dnCol = p.dnColor || "#F23645";
 
     var ts = entry.mainChart.timeScale();
@@ -1245,12 +1087,12 @@
       return extend ? Math.max(0, c) : Math.max(0, Math.min(plotW, c));
     }
 
-    var sw = smcRunStructure(d, swingLen, "atr");
-    var internal = p.showInternal ? smcRunStructure(d, internalLen, "atr") : null;
+    var sw = pd.swing;
+    var internal = p.showInternal ? pd.internal : null;
 
     // 1) 溢价/折价区 + 强弱高/低
     if (p.showZones || p.showStrongWeak) {
-      var tr = smcTrailing(d, swingLen);
+      var tr = pd.trail;
       if (tr.top > tr.bottom) {
         if (p.showZones) {
           var xz = xFrom(Math.min(tr.topIdx, tr.bottomIdx), true);
@@ -1301,8 +1143,8 @@
 
     // 2) FVG
     if (p.showFvg) {
-      var fvgs = smcFvgs(d).filter(function (f) { return f.mitigatedIdx === null; });
-      var maxF = smcClampInt(p.maxFvg, 1, 30, 6);
+      var fvgs = pd.fvgs.filter(function (f) { return f.mitigatedIdx === null; });
+      var maxF = clampInt(p.maxFvg, 1, 30, 6);
       if (fvgs.length > maxF) fvgs = fvgs.slice(fvgs.length - maxF);
       fvgs.forEach(function (f) {
         var xa = xFrom(f.idx, true); if (xa === null) return;
@@ -1327,7 +1169,7 @@
     // 3) 订单块
     function drawOBs(res, internalFlag) {
       var obs = res.orderBlocks.filter(function (o) { return o.mitigatedIdx === null; });
-      var cnt = smcClampInt(p.obCount, 1, 20, 5);
+      var cnt = clampInt(p.obCount, 1, 20, 5);
       if (obs.length > cnt) obs = obs.slice(obs.length - cnt);
       obs.forEach(function (o) {
         var xa = xFrom(o.idx, true); if (xa === null) return;
@@ -1381,7 +1223,7 @@
 
     // 5) 等高等低
     if (p.showEq) {
-      smcEqhEql(d, 4, SMC_EQ_THRESH).forEach(function (e) {
+      (pd.eq || []).forEach(function (e) {
         if (!inView(e.fromIdx) && !inView(e.toIdx)) return;
         var x0 = coord(e.fromIdx), x1 = coord(e.toIdx), y = yOf(e.price);
         if (x0 === null || x1 === null || y === null) return;
@@ -1946,7 +1788,6 @@
 
   /* ============ 警报设置（读写 Convex） ============ */
   var CONVEX_URL = "https://efficient-cod-911.convex.cloud";
-  var ALERT_SECRET_KEY = "alertSecret";
   var alertEditingId = null;
 
   function convexError(res) {
@@ -1977,141 +1818,11 @@
   }
   function convexQuery(path, args) { return convexPost("query", path, args); }
   function convexMutation(path, args) { return convexPost("mutation", path, args); }
+function convexAction(path, args) { return convexPost("action", path, args); }
 
-  function getSecret() { try { return localStorage.getItem(ALERT_SECRET_KEY) || ""; } catch (e) { return ""; } }
-  function setSecret(s) { try { localStorage.setItem(ALERT_SECRET_KEY, s); } catch (e) {} }
-  function currentSecret() {
-    var el = document.getElementById("alertSecret");
-    var s = el ? (el.value || "").trim() : getSecret();
-    setSecret(s);
-    return s;
-  }
 
-  function exLabel(ex) { return ({ gate: "Gate", weex: "WEEX", okx: "OKX" })[ex] || "Gate"; }
-  function fmtNum(n) { return (typeof n === "number") ? n.toLocaleString("en-US", { maximumFractionDigits: 6 }) : "-"; }
 
-  function alertMsg(text, kind) {
-    var el = document.getElementById("alertMsg");
-    el.textContent = text || "";
-    el.className = "alert-msg" + (kind ? " " + kind : "");
-  }
 
-  function ruleSummary(r) {
-    if (r.type === "cross_up") return "价格上破 " + fmtNum(r.price);
-    if (r.type === "cross_down") return "价格下破 " + fmtNum(r.price);
-    if (r.type === "breakout") {
-      var f = r.field === "low" ? "低" : "高";
-      var dir = r.dir === "down" ? "下破" : "上破";
-      return "前" + (r.offset || 2) + "根" + (r.tf || "1d") + f + dir;
-    }
-    return r.type;
-  }
-
-  function setDisplay(sel, on) {
-    Array.prototype.forEach.call(document.querySelectorAll("#alertBody " + sel), function (el) {
-      el.style.display = on ? "flex" : "none";
-    });
-  }
-  function applyTypeVisibility() {
-    var breakout = document.getElementById("rfType").value === "breakout";
-    setDisplay(".rf-price", !breakout);
-    setDisplay(".rf-break", breakout);
-    setDisplay(".rf-tf", breakout);
-  }
-
-  function buildAlertForm(r) {
-    alertEditingId = r ? r._id : null;
-    document.getElementById("rfExchange").value = r ? (r.exchange || "gate") : "gate";
-    document.getElementById("rfSymbol").value = r ? r.symbol : "BTC";
-    document.getElementById("rfType").value = r ? r.type : "cross_up";
-    document.getElementById("rfPrice").value = (r && r.price != null) ? r.price : "";
-    document.getElementById("rfTf").value = (r && r.tf) || "1d";
-    document.getElementById("rfOffset").value = (r && r.offset) || 2;
-    document.getElementById("rfField").value = (r && r.field) || "high";
-    document.getElementById("rfDir").value = (r && r.dir) || "up";
-    document.getElementById("rfLabel").value = r ? (r.label || "") : "";
-    document.getElementById("rfEnabled").checked = r ? !!r.enabled : true;
-    document.getElementById("rfSave").textContent = alertEditingId ? "保存修改" : "添加规则";
-    document.getElementById("rfCancel").style.display = alertEditingId ? "block" : "none";
-    applyTypeVisibility();
-  }
-
-  function ruleToArgs() {
-    var secret = currentSecret();
-    if (!secret) { alertMsg("请先填写写入口令", "err"); return null; }
-    var type = document.getElementById("rfType").value;
-    var symbol = document.getElementById("rfSymbol").value;
-    var rule = {
-      exchange: document.getElementById("rfExchange").value,
-      symbol: symbol,
-      label: document.getElementById("rfLabel").value.trim() || (symbol + "/USDT"),
-      type: type,
-      enabled: document.getElementById("rfEnabled").checked
-    };
-    if (type === "breakout") {
-      rule.indicator = "prev_ohlc";
-      rule.field = document.getElementById("rfField").value;
-      rule.dir = document.getElementById("rfDir").value;
-      rule.tf = document.getElementById("rfTf").value;
-      rule.offset = parseInt(document.getElementById("rfOffset").value, 10) || 2;
-    } else {
-      var p = parseFloat(document.getElementById("rfPrice").value);
-      if (isNaN(p)) { alertMsg("请填写有效价位", "err"); return null; }
-      rule.price = p;
-    }
-    var args = { secret: secret, rule: rule };
-    if (alertEditingId) args.id = alertEditingId;
-    return args;
-  }
-
-  function saveAlertRule() {
-    var args = ruleToArgs();
-    if (!args) return;
-    convexMutation("rulesAdmin:upsertRule", args).then(function () {
-      alertMsg("已保存", "ok");
-      buildAlertForm(null);
-      refreshAlertData();
-    }).catch(function (e) { alertMsg(e.message, "err"); });
-  }
-
-  function deleteAlertRule(r) {
-    if (!window.confirm("删除规则：" + r.label + " " + ruleSummary(r) + " ？")) return;
-    convexMutation("rulesAdmin:deleteRule", { secret: currentSecret(), id: r._id }).then(function () {
-      alertMsg("已删除", "ok"); refreshAlertData();
-    }).catch(function (e) { alertMsg(e.message, "err"); });
-  }
-
-  function toggleAlertRule(r) {
-    convexMutation("rulesAdmin:setEnabled", { secret: currentSecret(), id: r._id, enabled: !r.enabled })
-      .then(function () { refreshAlertData(); })
-      .catch(function (e) { alertMsg(e.message, "err"); });
-  }
-
-  function renderRuleList(rules) {
-    var list = document.getElementById("ruleList");
-    list.innerHTML = "";
-    if (!rules || !rules.length) { list.innerHTML = '<div class="alert-empty">暂无规则</div>'; return; }
-    rules.forEach(function (r) {
-      var row = document.createElement("div"); row.className = "rule-row";
-      var d = document.createElement("div"); d.className = "rule-desc";
-      d.innerHTML = "[" + exLabel(r.exchange) + "] " + r.label + " · <b>" + ruleSummary(r) + "</b>";
-      row.appendChild(d);
-      var ops = document.createElement("div"); ops.className = "rule-ops";
-      var t = document.createElement("button");
-      t.textContent = r.enabled ? "启用中" : "已停用";
-      t.className = r.enabled ? "on" : "off";
-      t.addEventListener("click", function () { toggleAlertRule(r); });
-      ops.appendChild(t);
-      var ed = document.createElement("button"); ed.textContent = "编辑";
-      ed.addEventListener("click", function () { buildAlertForm(r); alertMsg("编辑中：" + r.label, ""); });
-      ops.appendChild(ed);
-      var del = document.createElement("button"); del.textContent = "删除";
-      del.addEventListener("click", function () { deleteAlertRule(r); });
-      ops.appendChild(del);
-      row.appendChild(ops);
-      list.appendChild(row);
-    });
-  }
 
   function renderAlertList(alerts) {
     var el = document.getElementById("alertList");
@@ -2130,36 +1841,46 @@
     });
   }
 
-  function refreshAlertData() {
-    convexQuery("market:rules", {}).then(function (rules) { renderRuleList(rules); })
-      .catch(function () { document.getElementById("ruleList").innerHTML = '<div class="alert-empty">读取失败</div>'; });
-    convexQuery("market:recentAlerts", { limit: 20 }).then(function (alerts) { renderAlertList(alerts); })
-      .catch(function () {});
-  }
+ function refreshAlertData() {
+ convexQuery("market:recentAlerts", { limit: 20 }).then(function (alerts) { renderAlertList(alerts); })
+ .catch(function () {});
+ }
 
-  function openAlert() {
-    document.getElementById("alertSecret").value = getSecret();
-    document.getElementById("alertMask").classList.add("show");
-    alertMsg("");
-    buildAlertForm(null);
-    refreshAlertData();
-  }
-  function closeAlert() { document.getElementById("alertMask").classList.remove("show"); }
+ function openAlert() {
+ document.getElementById("alertMask").classList.add("show");
+ refreshAlertData();
+ }
+ function closeAlert() { document.getElementById("alertMask").classList.remove("show"); }
 
-  function wireAlertUI() {
-    document.getElementById("btnAlert").addEventListener("click", openAlert);
-    document.getElementById("alertClose").addEventListener("click", closeAlert);
-    document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
-    document.getElementById("alertSecret").addEventListener("input", function () { setSecret(this.value.trim()); });
-    document.getElementById("rfType").addEventListener("change", applyTypeVisibility);
-    document.getElementById("rfSave").addEventListener("click", saveAlertRule);
-    document.getElementById("rfCancel").addEventListener("click", function () { buildAlertForm(null); alertMsg(""); });
-  }
+ function wireAlertUI() {
+ document.getElementById("btnAlert").addEventListener("click", openAlert);
+ document.getElementById("alertClose").addEventListener("click", closeAlert);
+ document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
+ }
 
   /* ================= SMC 作战面板 =================
      脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 价格进入入区且出现低周期同向确认才提示 → 区域外止损 → 前高前低/流动性止盈。
-     跨周期取数（方向 / 区域 / 入场），结构判定复用同页 smc* 函数（与 luxSmc 一致）。 */
-  var BT_KEY = "market-dashboard:battle:v1";
+     跨周期取数（方向 / 区域 / 入场），结构与入区判定全部由后端 panel:battleStatus 计算（单一事实来源）。 */
+  function btTrigState(st, mtfIv, ltfIv) {
+  var m = btIvLabel(mtfIv), l = btIvLabel(ltfIv);
+  if (st.stage === "confirmed") return { state: "确认齐全（" + m + " 内部：" + st.internalKind + " → " + l + " 触发：" + st.kind + "，可入场）", tone: st.inZone ? "up" : "" };
+  if (st.stage === "c1") return { state: m + " 已确认，" + l + " 触发待出现", tone: "" };
+  if (st.stage === "c2") return { state: l + " 已触发，" + m + " 内部确认待出现", tone: "" };
+  if (st.stage === "invalid") return { state: "区域已失效（价格收盘穿过远端边界）", tone: "" };
+  if (st.stage === "in-zone") return { state: "已到区域，窗口内等待确认", tone: st.inZone ? "up" : "" };
+  return { state: "未进入区域", tone: "" };
+}
+function btDecorate(st, htfIv, mtfIv, ltfIv, label) {
+  var t = btTrigState(st.trig, mtfIv, ltfIv);
+  return {
+    label: label, price: st.price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
+    bias: st.bias, bg: st.bg, htfTrend: st.htfTrend, dirOk: st.dirOk, dirFresh: st.dirFresh, dirDisp: st.dirDisp,
+    htfRes: st.htfRes, mtfRes: st.mtfRes, lastBreak: st.lastBreak,
+    zones: st.zones, trail: st.trail, atr: st.atr, sweep: st.sweep, risk: st.risk,
+    trig: { state: t.state, tone: t.tone, inZone: st.trig.inZone, confirmed: st.trig.confirmed, kind: st.trig.kind, internalKind: st.trig.internalKind, ltfBreak: st.trig.ltfBreak }
+  };
+}
+var BT_KEY = "market-dashboard:battle:v1";
   var btState = btLoad();
   function btLoad() { try { return JSON.parse(localStorage.getItem(BT_KEY)) || {}; } catch (e) { return {}; } }
   function btSave(o) { try { localStorage.setItem(BT_KEY, JSON.stringify(o)); } catch (e) {} }
@@ -2168,263 +1889,6 @@
   function btFetch(contract, iv, limit) {
     var ex = EXCHANGES[state.exchange];
     return ex.fetchCandles(contract, ex.interval(iv), limit).then(function (d) { return sortCandles(d); });
-  }
-  function btEngulf(prev, last, bias) {
-    if (!prev) return false;
-    if (bias === "bull") return last.close > last.open && prev.close < prev.open && last.close >= prev.open && last.open <= prev.close;
-    return last.close < last.open && prev.close > prev.open && last.close <= prev.open && last.open >= prev.close;
-  }
-  function btPin(c, bias) {
-    var rng = c.high - c.low; if (rng <= 0) return false;
-    if (Math.abs(c.close - c.open) > rng * 0.34) return false;
-    if (bias === "bull") return (Math.min(c.close, c.open) - c.low) >= rng * 0.5;
-    return (c.high - Math.max(c.close, c.open)) >= rng * 0.5;
-  }
-  function btHasDisp(candles, z, atrArr) {
-    var end = Math.min(candles.length, z.idx + 10 + 1);
-    for (var k = z.idx; k < end; k++) {
-      var c = candles[k], a = atrArr[k];
-      var dir = z.bias === "bull" ? c.close > c.open : c.close < c.open;
-      if (dir && isFinite(a) && a > 0 && (c.high - c.low) >= 1.5 * a) return true;
-    }
-    return false;
-  }
-  function btSweep(htfRes, candles, bias) {
-    if (bias !== "bull" && bias !== "bear" || !htfRes) return { swept: false, level: null };
-    var arr = bias === "bull" ? htfRes.lows : htfRes.highs;
-    var n = candles.length, from = Math.max(0, n - 20);
-    for (var i = from; i < n; i++) {
-      var c = candles[i];
-      for (var j = 0; j < arr.length; j++) {
-        var p = arr[j];
-        if (p.idx >= i) continue;
-        if (bias === "bull") { if (c.low < p.price && c.close > p.price) return { swept: true, level: p.price }; }
-        else if (c.high > p.price && c.close < p.price) return { swept: true, level: p.price };
-      }
-    }
-    return { swept: false, level: null };
-  }
-  function btZoneSet(candles, bias) {
-    var swing = smcRunStructure(candles, 8, "atr");
-    var atrArr = smcAtr(candles, SMC_ATR_LEN);
-    var zones = [];
-    swing.orderBlocks.forEach(function (o) {
-      if (o.mitigatedIdx === null && o.bias === bias) zones.push({ kind: "OB", bias: bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
-    });
-    smcFvgs(candles).forEach(function (f) {
-      if (f.mitigatedIdx === null && f.dir === bias) zones.push({ kind: "FVG", bias: bias, top: f.top, bottom: f.bottom, idx: f.idx, t: f.t });
-    });
-    var seen = {};
-    zones = zones.filter(function (z) {
-      if (!btHasDisp(candles, z, atrArr)) return false;
-      var k = z.kind + "#" + z.idx + "#" + z.bottom + "#" + z.top;
-      if (seen[k]) return false; seen[k] = 1; return true;
-    });
-    zones.forEach(function (z) {
-      var tc = 0;
-      for (var k = z.idx + 1; k < candles.length; k++) {
-        if (candles[k].low <= z.top && candles[k].high >= z.bottom) tc++;
-      }
-      z.touched = tc;
-      z.fresh = tc === 0;
-      z.overlap = zones.some(function (o) { return o !== z && o.kind !== z.kind && o.bottom <= z.top && o.top >= z.bottom; });
-    });
-    return zones;
-  }
-function btTrigger(ltf, mtf, bias, zones, price, atrVal, mtfIv, ltfIv) {
-  if (bias !== "bull" && bias !== "bear") return { state: "高周期无明确方向", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
-  var WINDOW = 24 * 3; // 统一确认窗口：24 根 15m = 72 根 5m
-  var SPAN = 6;        // 确认1↔确认2 两根 5m K 索引差上限（顺序不限）
-  var buf = 0.15 * atrVal;
-  function zoneAt(p) {
-    var z = null;
-    zones.forEach(function (zz) {
-      if (p >= zz.bottom - buf && p <= zz.top + buf) {
-        if (!z || Math.abs(p - (zz.top + zz.bottom) / 2) < Math.abs(p - (z.top + z.bottom) / 2)) z = zz;
-      }
-    });
-    return z;
-  }
-  var n = ltf.length, lo = Math.max(0, n - 1 - WINDOW), start = -1, z0 = null;
-  for (var i = lo; i < n; i++) { var zz0 = zoneAt(ltf[i].close); if (zz0) { start = i; z0 = zz0; break; } }
-  if (start < 0 || !z0) return { state: "价格未到入区，等待回踩", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
-  // 区域失效：窗口内任一 5m 收盘穿远端边界（做多=跌破下沿；做空=升破上沿）。
-  for (var i2 = start + 1; i2 < n; i2++) {
-    if (z0.bias === "bull" ? ltf[i2].close < z0.bottom : ltf[i2].close > z0.top)
-      return { state: "价格未到入区，等待回踩", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
-  }
-  // 确认1（15m 内部同向突破，映射到其被确认后的 5m 索引）与确认2（5m 同向触发）。
-  var mres = smcRunStructure(mtf, 4, "atr");
-  var c1 = [];
-  mres.breaks.forEach(function (b) {
-    if (b.dir !== bias) return;
-    var bcClose = b.time + 900;
-    for (var i3 = start; i3 < n; i3++) { if (ltf[i3].time + 300 >= bcClose) { c1.push({ i: i3, kind: b.tag }); break; } }
-  });
-  var lres = smcRunStructure(ltf, 4, "atr");
-  var c2 = [];
-  for (var i4 = start; i4 < n; i4++) {
-    var brk = null;
-    for (var j = 0; j < lres.breaks.length; j++) { if (lres.breaks[j].idx === i4 && lres.breaks[j].dir === bias) { brk = lres.breaks[j]; break; } }
-    if (brk) c2.push({ i: i4, kind: brk.tag + (brk.dir === "bull" ? "向上" : "向下") });
-    else if (i4 > 0 && btEngulf(ltf[i4 - 1], ltf[i4], bias)) c2.push({ i: i4, kind: "吞没" });
-    else if (btPin(ltf[i4], bias)) c2.push({ i: i4, kind: "Pin Bar" });
-  }
-  var bestD = Infinity, b1 = null, b2 = null;
-  c1.forEach(function (a) { c2.forEach(function (b) { var d = Math.abs(a.i - b.i); if (d <= SPAN && d < bestD) { bestD = d; b1 = a; b2 = b; } }); });
-  var internalKind = b1 ? (b1.kind === "CHoCH" ? "CHoCH" : "BOS") : "";
-  var kind = b2 ? b2.kind : "";
-  var confirmed = !!b1 && !!b2;
-  var inZ = zoneAt(price);
-  var state;
-  if (confirmed) state = "窗口内确认齐全（" + btIvLabel(mtfIv) + " 内部：" + internalKind + " → " + btIvLabel(ltfIv) + " 触发：" + kind + "，可入场）";
-  else if (b1) state = "窗口内 " + btIvLabel(mtfIv) + " 已确认，" + btIvLabel(ltfIv) + " 触发待出现";
-  else if (b2) state = "窗口内 " + btIvLabel(ltfIv) + " 已触发，" + btIvLabel(mtfIv) + " 内部确认待出现";
-  else state = "已到区域，窗口内等待确认";
-  return { state: state, tone: inZ ? bias : "", inZone: inZ, confirmed: confirmed, kind: kind, internalKind: internalKind, ltfBreak: lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null };
-}
-  function btLiquiditySide(htfRes, ref, dir) {
-    var arr = dir === "up" ? htfRes.highs : htfRes.lows;
-    return arr.map(function (p) { return p.price; })
-      .filter(function (lv) { return dir === "up" ? lv > ref : lv < ref; })
-      .sort(function (a, b) { return Math.abs(a - ref) - Math.abs(b - ref); });
-  }
-  function btRisk(bias, zone, htfRes, price, atrVal, extras) {
-    if (!zone || (bias !== "bull" && bias !== "bear")) return null;
-    var buf = 0.2 * atrVal, entry, stop, dir;
-    if (bias === "bull") { dir = "up"; entry = zone.top; stop = zone.bottom - buf; }
-    else { dir = "down"; entry = zone.bottom; stop = zone.top + buf; }
-    var riskUnit = Math.abs(entry - stop);
-    var cands = btLiquiditySide(htfRes, entry, dir);
-    (extras || []).forEach(function (lv) {
-      if (isFinite(lv) && (dir === "up" ? lv > entry : lv < entry)) cands.push(lv);
-    });
-    cands.sort(function (a, b) { return Math.abs(a - entry) - Math.abs(b - entry); });
-    var target = null;
-    if (riskUnit > 0) {
-      for (var i = 0; i < cands.length; i++) { if (Math.abs(cands[i] - entry) / riskUnit >= 2) { target = cands[i]; break; } }
-    }
-    if (target == null && cands.length) target = cands[0];
-    var reward = target == null ? null : Math.abs(target - entry);
-    var rr = (reward == null || riskUnit <= 0) ? null : reward / riskUnit;
-    return { entry: entry, stop: stop, target: target, rr: rr, stopPct: riskUnit / price };
-  }
-  var BT_SESSIONS = [
-    { name: "亚洲盘", tz: "Asia/Tokyo", start: 540, end: 900 },
-    { name: "伦敦盘", tz: "Europe/London", start: 480, end: 990 },
-    { name: "纽约盘", tz: "America/New_York", start: 570, end: 960 }
-  ];
-  var BT_CYCLE = ["亚洲盘", "伦敦盘", "纽约盘"];
-  var BT_PREV = { 亚洲盘: "纽约盘", 伦敦盘: "亚洲盘", 纽约盘: "伦敦盘" };
-  function btTzMinutes(ts, tz) {
-    var parts = tzFmt(tz).formatToParts(new Date(ts * 1000)), hh = 0, mm = 0;
-    for (var j = 0; j < parts.length; j++) {
-      if (parts[j].type === "hour") hh = parseInt(parts[j].value, 10) % 24;
-      else if (parts[j].type === "minute") mm = parseInt(parts[j].value, 10);
-    }
-    return hh * 60 + mm;
-  }
-  function btInWindow(m, start, end) { if (start === end) return false; if (start < end) return m >= start && m < end; return m >= start || m < end; }
-  function btCurrentSession(now) {
-    var best = null, bestIdx = -1;
-    BT_SESSIONS.forEach(function (s) {
-      if (!btInWindow(btTzMinutes(now, s.tz), s.start, s.end)) return;
-      var idx = BT_CYCLE.indexOf(s.name);
-      if (idx > bestIdx) { best = s.name; bestIdx = idx; }
-    });
-    return best;
-  }
-  function btSessionStartBefore(now, s) {
-    var locNow = btTzMinutes(now, s.tz), delta = locNow - s.start;
-    if (delta < 0) delta += 1440;
-    return now - delta * 60;
-  }
-  function btCurrentSessionStart(now) {
-    var cur = btCurrentSession(now);
-    if (cur) { for (var i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === cur) return btSessionStartBefore(now, BT_SESSIONS[i]); }
-    return Math.max.apply(null, BT_SESSIONS.map(function (s) { return btSessionStartBefore(now, s); }));
-  }
-  function btSessionDurSec(s) { var d = s.end - s.start; if (d <= 0) d += 1440; return d * 60; }
-  function btCurrentDayStart(now) { return Math.floor((now + 8 * 3600) / 86400) * 86400 - 8 * 3600; }
-  function btCurrentSessionWindow(now) {
-    var cur = btCurrentSession(now); if (!cur) return null;
-    for (var i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === cur) { var s = BT_SESSIONS[i], st = btSessionStartBefore(now, s); return { name: cur, start: st, end: st + btSessionDurSec(s) }; }
-    return null;
-  }
-  function btLastClosedWindow(now, name) {
-    var s = null, i;
-    for (i = 0; i < BT_SESSIONS.length; i++) if (BT_SESSIONS[i].name === name) s = BT_SESSIONS[i];
-    if (!s) s = BT_SESSIONS[0];
-    var st = btSessionStartBefore(now, s), dur = btSessionDurSec(s);
-    var base = (st + dur > now) ? (st - 86400) : st;
-    return { start: base, end: base + dur };
-  }
-  function btRangeOf(c, from, to) {
-    var hi = -Infinity, lo = Infinity, any = false;
-    for (var i = 0; i < c.length; i++) { if (c[i].time < from || c[i].time >= to) continue; any = true; if (c[i].high > hi) hi = c[i].high; if (c[i].low < lo) lo = c[i].low; }
-    return any ? { hi: hi, lo: lo } : null;
-  }
-  function btPrevDayRange(c, now) {
-    function dayKey(t) { return Math.floor((t + 8 * 3600) / 86400); }
-    var today = dayKey(now), best = -Infinity, hi = -Infinity, lo = Infinity, any = false;
-    for (var i = 0; i < c.length; i++) {
-      var k = dayKey(c[i].time);
-      if (k >= today) continue;
-      if (k > best) { best = k; hi = c[i].high; lo = c[i].low; any = true; }
-      else if (k === best) { if (c[i].high > hi) hi = c[i].high; if (c[i].low < lo) lo = c[i].low; }
-    }
-    return any ? { hi: hi, lo: lo } : null;
-  }
-  function btIntradayLevels(mtf, now) {
-    var out = [];
-    function push(r) { if (r && isFinite(r.hi) && isFinite(r.lo)) { out.push(r.hi); out.push(r.lo); } }
-    push(btPrevDayRange(mtf, now));
-    var asia = btLastClosedWindow(now, "亚洲盘"); push(btRangeOf(mtf, asia.start, asia.end));
-    var cur = btCurrentSessionWindow(now); if (cur) push(btRangeOf(mtf, cur.start, cur.start + 1800));
-    return out;
-  }
-  function btReverseClosed(candles, brk) {
-    if (!brk) return false;
-    for (var k = brk.idx + 1; k < candles.length; k++) {
-      if (brk.dir === "bull" ? candles[k].close < brk.level : candles[k].close > brk.level) return true;
-    }
-    return false;
-  }
-  function btCompute(htf, mtf, ltf, htfIv, mtfIv, ltfIv, label) {
-    var price = ltf[ltf.length - 1].close;
-    var nowSec = Math.floor(Date.now() / 1000);
-    // 背景：1h 只定偏置，被反向收盘破坏即作废。
-    var htfRes = smcRunStructure(htf, 8, "atr");
-    var htfTrend = htfRes.trendAtEnd;
-    var htfLast = htfRes.breaks.length ? htfRes.breaks[htfRes.breaks.length - 1] : null;
-    var bg = ((htfTrend === "bull" || htfTrend === "bear") && htfLast && !btReverseClosed(htf, htfLast)) ? htfTrend : "range";
-    // 日内方向：由 15m 摆动结构（size=8）刷新，须落在当前北京日内（当天有效）；反向 CHoCH 会令 trendAtEnd 翻向而自动降级。
-    // 位移硬过滤：定方向的那次 BOS/CHoCH 必须带 ≥1.5×ATR 同向位移，否则视为摆动不明确 → 观望。
-    var mtfDir = smcRunStructure(mtf, 8, "atr");
-    var dir = mtfDir.trendAtEnd;
-    var dirLast = mtfDir.breaks.length ? mtfDir.breaks[mtfDir.breaks.length - 1] : null;
-    var dirFresh = !!dirLast && dirLast.time >= btCurrentDayStart(nowSec);
-    var mtfAtr = smcAtr(mtf, SMC_ATR_LEN);
-    var dirDisp = !!dirLast && btHasDisp(mtf, { idx: dirLast.idx, bias: dir }, mtfAtr);
-    var dirOk = (dir === "bull"||dir === "bear") && dirFresh && dirDisp;
-    var bias = dirOk ? dir : "range";
-    var atrVal = smcAtr(ltf, 14)[ltf.length - 1] || (price * 0.002);
-    var zones = [];
-    if (bias === "bull" || bias === "bear") {
-      zones = btZoneSet(mtf, bias);
-      zones.forEach(function (z) {
-        z.dist = (z.bottom > price) ? (z.bottom - price) : (z.top < price ? (price - z.top) : 0);
-        z.side = (z.bottom > price) ? "上" : (z.top < price ? "下" : "内");
-      });
-      zones.sort(function (a, b) { return a.dist - b.dist; });
-    }
-    var trig = btTrigger(ltf, mtf, bias, zones, price, atrVal, mtfIv, ltfIv);
-    var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal, btIntradayLevels(mtf, nowSec));
-    var trail = smcTrailing(htf, 8);
-    var sweep = btSweep(htfRes, htf, bias);
-    return { label: label, price: price, htfIv: htfIv, mtfIv: mtfIv, ltfIv: ltfIv,
-      bias: bias, bg: bg, htfTrend: htfTrend, dirOk: dirOk, dirFresh: dirFresh, dirDisp: dirDisp,
-      htfRes: htfRes, mtfRes: mtfDir, lastBreak: dirLast, zones: zones.slice(0, 5), trig: trig, risk: risk, trail: trail, atr: atrVal, sweep: sweep };
   }
   function renderBattle(x) {
     var el = document.getElementById("btResult"), dp = priceDp(x.price);
@@ -2552,7 +2016,9 @@ function btTrigger(ltf, mtf, bias, zones, price, atrVal, mtfIv, ltfIv) {
       btFetch(contract, ltfIv, 500)
     ]).then(function (arr) {
       if (arr[0].length < 60 || arr[1].length < 60 || arr[2].length < 30) { el.innerHTML = '<div class="bt-note bt-bad">K 线数据不足，无法计算。</div>'; return; }
-      renderBattle(btCompute(arr[0], arr[1], arr[2], htfIv, mtfIv, ltfIv, inst.label));
+      convexAction("panel:battleStatus", { htf: candlesToApi(arr[0]), mtf: candlesToApi(arr[1]), ltf: candlesToApi(arr[2]), now: Math.floor(Date.now() / 1000) })
+   .then(function (st) { renderBattle(btDecorate(st, htfIv, mtfIv, ltfIv, inst.label)); })
+   .catch(function (e) { el.innerHTML = '<div class="bt-note bt-bad">计算失败：' + btEsc(e.message) + "</div>"; });
     }).catch(function (e) {
       el.innerHTML = '<div class="bt-note bt-bad">加载失败：' + btEsc(e.message) + "</div>";
     });

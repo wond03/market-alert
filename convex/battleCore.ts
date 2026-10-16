@@ -35,7 +35,7 @@ export const DISP_MULT = 1.5; // 位移 K 线：范围 ≥ N×ATR（且方向与
 export const SWEEP_LOOKBACK = 20; // 扫荡检测回看根数（HTF）
 export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的最近对手流动性
 
-type Bias = "bull" | "bear";
+export type Bias = "bull" | "bear";
 
 // 逐标的持久化状态：当天去重指纹 + 统一确认窗口（当前跟踪区域及其首次入区时间）。
 export type BattleState = {
@@ -120,10 +120,10 @@ function firstLtfIdxClosingAtOrAfter(ltf: Candle[], tClose: number): number {
   for (let i = 0; i < ltf.length; i++) if (ltf[i].t + LTF.sec >= tClose) return i;
   return -1;
 }
-type C1 = { i: number; tag: string };
-type C2 = { i: number; label: string };
+export type C1 = { i: number; tag: string };
+export type C2 = { i: number; label: string };
 // 确认1：窗口内出现的 15m 内部结构同向突破（映射到其被确认后的 5m K 索引）。
-function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C1[] {
+export function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C1[] {
   const out: C1[] = [];
   for (const b of runStructure(mtf, INTERNAL_LEN).breaks) {
     if (b.dir !== bias) continue;
@@ -135,7 +135,7 @@ function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT: numbe
   return out;
 }
 // 确认2：窗口内出现的 5m 同向触发（内部突破 / 吞没 / Pin Bar）。
-function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C2[] {
+export function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C2[] {
   const breaks = runStructure(ltf, INTERNAL_LEN).breaks;
   const dirWord = bias === "bull" ? "向上" : "向下";
   const out: C2[] = [];
@@ -154,7 +154,7 @@ function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastCloseT: 
   return out;
 }
 // 取索引差最小且 ≤ maxSpan 的「确认1×确认2」组合（顺序不限）；返回用于展示的两个确认文案。
-function closestPair(c1: C1[], c2: C2[], maxSpan: number): { confirm: string; confirmInternal: string } | null {
+export function closestPair(c1: C1[], c2: C2[], maxSpan: number): { confirm: string; confirmInternal: string } | null {
   let best: { confirm: string; confirmInternal: string } | null = null;
   let bestD = Infinity;
   for (const a of c1) {
