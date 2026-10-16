@@ -58,8 +58,6 @@ mindmap
       env TELEGRAM RULES_SECRET BATTLE
 ```
 
-若上图未渲染，可直接打开矢量图 [mindmap.svg](./mindmap.svg)。
-
 ## 1. 分层总览
 
 | 层 | 模块 | 关键内容 | 说明 | 代码位置 |
