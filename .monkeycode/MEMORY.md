@@ -32,7 +32,7 @@
   - 推代码：dev `npx convex dev --once`；prod `npx convex deploy`。
   - 运行函数：`npx convex run <module>:<fn> [--prod]`（路径用冒号，写成 `.` 会报 `BadConvexFunctionIdentifier`）。
   - 环境变量：`npx convex env set/list/get NAME [--prod]`；dev→prod 不回显复制：`npx convex env get NAME | npx convex env set NAME --prod`。变量：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`RULES_SECRET`、`SMC_TRACKING`(仅 prod=1)、`BATTLE`(仅 prod=1)。
-  - 定时任务在 `convex/crons.ts`：`alerts:pollAndCheck` 每分钟、`smc track` 每 5 分钟、`battle signal` 每分钟。
+  - 定时任务在 `convex/crons.ts`：`alerts:pollAndCheck` 每分钟、`smc track` 每 5 分钟、`battle signal` 每分钟、`battle weekly report` 每周一 01:00 UTC（北京 09:00，近 7 天周报推 Telegram）。
   - 推送自检：`npx convex run alerts:sendTest [--prod]`。
 
 [Project Knowledge Summary]
