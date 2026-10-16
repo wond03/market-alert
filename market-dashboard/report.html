@@ -46,15 +46,15 @@ th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--pan
   <h1>猎场 Vantage · 报表</h1>
   <span class="muted" id="range"></span>
   <span class="spacer"></span>
-  <button class="btn" data-days="7">近 7 天</button>
-  <button class="btn" data-days="30">近 30 天</button>
+  <button class="btn" data-period="week">本周</button>
+  <button class="btn" data-period="month">本月</button>
   <button class="btn" id="reload">刷新</button>
 </header>
 <main id="app"><div class="muted" style="padding:24px">加载中…</div></main>
 
 <script>
 var CONVEX_URL = "https://efficient-cod-911.convex.cloud";
-var WIN = 7;
+var PERIOD = "week";
 
 function convexError(res){
   if(res && res.errorData!=null){ if(typeof res.errorData==="string") return res.errorData; try{return JSON.stringify(res.errorData);}catch(e){} }
@@ -103,7 +103,7 @@ function equityChart(equity){
 
 function render(d){
   var app=document.getElementById("app"); app.innerHTML="";
-  document.getElementById("range").textContent="区间 "+fmtTs(d.range.since)+" ~ "+fmtTs(d.range.until)+"（"+d.range.days+" 天）";
+  document.getElementById("range").textContent=(d.range.mode==="month"?"本月":"本周")+"： "+fmtTs(d.range.since)+" ~ "+fmtTs(d.range.until);
 
   var m=d.metrics, a=d.account, f=d.funnel, ddw=d.drawdown.week, ddm=d.drawdown.month;
 
@@ -184,17 +184,17 @@ function render(d){
 
 function load(){
   document.getElementById("app").innerHTML='<div class="muted" style="padding:24px">加载中…</div>';
-  convexQuery("report:pageData",{days:WIN}).then(render).catch(function(e){
+  convexQuery("report:pageData",{period:PERIOD}).then(render).catch(function(e){
     document.getElementById("app").innerHTML='<div class="err">加载失败：'+String(e.message||e)+'</div>';
   });
 }
 
-Array.prototype.forEach.call(document.querySelectorAll("[data-days]"),function(b){
-  b.addEventListener("click",function(){ WIN=Number(b.getAttribute("data-days")); syncBtns(); load(); });
+Array.prototype.forEach.call(document.querySelectorAll("[data-period]"),function(b){
+  b.addEventListener("click",function(){ PERIOD=b.getAttribute("data-period"); syncBtns(); load(); });
 });
 document.getElementById("reload").addEventListener("click",load);
-function syncBtns(){ Array.prototype.forEach.call(document.querySelectorAll("[data-days]"),function(b){
-  b.classList.toggle("active", Number(b.getAttribute("data-days"))===WIN); }); }
+function syncBtns(){ Array.prototype.forEach.call(document.querySelectorAll("[data-period]"),function(b){
+  b.classList.toggle("active", b.getAttribute("data-period")===PERIOD); }); }
 syncBtns();
 load();
 </script>

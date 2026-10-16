@@ -4,8 +4,10 @@ import { v } from "convex/values";
 // 作战面板报表：只读聚合，供 report.html 展示。
 // 账户口径：本金 100U、名义 500U、杠杆 100x、每笔保证金 5U、双边 taker 0.05%，不加滞点。
 // 指标统一用「扣费后净 R」。
+// 周期：自然周（周日 05:00 北京起）与自然月（每月 1 号 00:00 北京起）。
 
 const DAY = 86400;
+const BJ = 8 * 3600;
 
 const PRINCIPAL = 100; // 账户本金 USDT
 const NOTIONAL = 500; // 每笔名义 USDT
@@ -13,6 +15,27 @@ const LEVERAGE = 100; // 杠杆
 const MARGIN = NOTIONAL / LEVERAGE; // 每笔保证金 USDT
 const TAKER = 0.0005; // 单边 taker
 const FEE_PER_TRADE = NOTIONAL * TAKER * 2; // 双边手续费 USDT
+
+// 自然周起点：最近一个周日 05:00（北京）。
+function startOfWeekBJ(now: number): number {
+  const shift = now + BJ; // 北京墙钟，按 UTC 字段读取
+  const d = new Date(shift * 1000);
+  const dow = d.getUTCDay(); // 0=周日
+  d.setUTCDate(d.getUTCDate() - dow);
+  d.setUTCHours(0, 0, 0, 0);
+  let startWall = Math.floor(d.getTime() / 1000) + 5 * 3600; // 周日 05:00 墙钟
+  if (startWall > shift) startWall -= 7 * DAY;
+  return startWall - BJ;
+}
+
+// 自然月起点：本月 1 号 00:00（北京）。
+function startOfMonthBJ(now: number): number {
+  const shift = now + BJ;
+  const d = new Date(shift * 1000);
+  d.setUTCDate(1);
+  d.setUTCHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000) - BJ;
+}
 
 type RawTrade = {
   symbol: string;
@@ -78,16 +101,17 @@ function curve(trades: Trade[], to: (t: Trade) => number): number[] {
 }
 
 export const pageData = query({
-  args: { days: v.optional(v.number()) },
-  handler: async (ctx, { days }) => {
-    const win = days && days > 0 ? Math.floor(days) : 7;
+  args: { period: v.optional(v.string()) },
+  handler: async (ctx, { period }) => {
+    const mode = period === "month" ? "month" : "week";
     const now = Math.floor(Date.now() / 1000);
-    const since = now - win * DAY;
-    const since30 = now - 30 * DAY;
+    const weekStart = startOfWeekBJ(now);
+    const monthStart = startOfMonthBJ(now);
+    const since = mode === "month" ? monthStart : weekStart;
 
     const rows = await ctx.db
       .query("battleSignals")
-      .withIndex("by_sigTs", (q) => q.gte("sigTs", since30))
+      .withIndex("by_sigTs", (q) => q.gte("sigTs", monthStart))
       .collect();
 
     const openedTs = rows.map((r) => r.sigTs);
@@ -166,7 +190,7 @@ export const pageData = query({
       }
     }
 
-    // 回撤：周（窗口）与月（30 天）。
+    // 回撤：自然周与自然月各一条权益曲线。
     const dd = (list: Trade[]) => {
       if (!list.length) return { mddR: 0, mddUsd: 0, mddPct: 0 };
       return {
@@ -175,8 +199,10 @@ export const pageData = query({
         mddPct: maxDrawdown(curve(list, (t) => (t.pnlUsd / PRINCIPAL) * 100)),
       };
     };
+    const weekTrades = all.filter((t) => t.closedTs >= weekStart);
+    const monthTrades = all.filter((t) => t.closedTs >= monthStart);
 
-    // 漏斗：区域内各层通过。
+    // 漏斗：区域内各层通过（按当前周期）。
     const frows = await ctx.db
       .query("battleFunnel")
       .withIndex("by_ts", (q) => q.gte("zoneStartT", since))
@@ -199,7 +225,7 @@ export const pageData = query({
       rateOverall: rate(confirmed, entered),
     };
 
-    // 权益曲线（窗口内）。
+    // 权益曲线（当前周期内）。
     let acc = 0;
     const equity = closed.map((t) => {
       acc += t.pnlUsd;
@@ -228,7 +254,7 @@ export const pageData = query({
     }));
 
     return {
-      range: { since, until: now, days: win },
+      range: { since, until: now, mode, weekStart, monthStart },
       account: {
         principal: PRINCIPAL,
         notional: NOTIONAL,
@@ -250,7 +276,7 @@ export const pageData = query({
       },
       rBuckets,
       attribution,
-      drawdown: { week: dd(closed), month: dd(all) },
+      drawdown: { week: dd(weekTrades), month: dd(monthTrades) },
       equity,
       trades,
     };
