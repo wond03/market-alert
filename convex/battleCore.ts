@@ -33,6 +33,12 @@ export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的
 
 type Bias = "bull" | "bear";
 
+// 回测可覆盖的可调阈值；生产不传，沿用上方常量，保证线上行为不变。
+export type BattleEvalOpts = {
+  internalConfirmLookback?: number; // 覆盖 INTERNAL_CONFIRM_LOOKBACK（确认 1：15m 内部结构回看根数）
+  confirmLookback?: number; // 覆盖 CONFIRM_LOOKBACK（确认 2：5m 触发回看根数）
+};
+
 export type Zone = {
   kind: "OB" | "FVG";
   bias: Bias;
@@ -353,6 +359,7 @@ export function evaluateBattle(
   now: number,
   exchange = "gate",
   symbol = "BTC",
+  opts: BattleEvalOpts = {},
 ): BattleEval {
   // 1h 背景：只定偏置；被反向收盘破坏即作废（不看经过多少根 K 线）。
   const htfSt = runStructure(htf, HTF.swing);
@@ -396,7 +403,8 @@ export function evaluateBattle(
   // 确认 1（15m 内部结构）：摆动结构定方向后，要求内部结构出现同向 CHoCH/BOS，代表回调结束。
   const mtfInternal = runStructure(mtf, INTERNAL_LEN);
   const ib = mtfInternal.breaks.length ? mtfInternal.breaks[mtfInternal.breaks.length - 1] : undefined;
-  const internalConfirm = !!ib && ib.dir === bias && mtf.length - 1 - ib.idx <= INTERNAL_CONFIRM_LOOKBACK;
+  const internalLookback = opts.internalConfirmLookback ?? INTERNAL_CONFIRM_LOOKBACK;
+  const internalConfirm = !!ib && ib.dir === bias && mtf.length - 1 - ib.idx <= internalLookback;
   const confirmInternal = internalConfirm ? (ib!.tag === "CHoCH" ? "CHoCH" : "BOS") : "";
   const buf = ZONE_BUF_ATR * ltfAtr;
 
@@ -421,7 +429,8 @@ export function evaluateBattle(
 
   const ltfSt = runStructure(ltf, INTERNAL_LEN);
   const lb = ltfSt.breaks.length ? ltfSt.breaks[ltfSt.breaks.length - 1] : undefined;
-  const recentBreak = !!lb && lb.dir === bias && ltf.length - 1 - lb.idx <= CONFIRM_LOOKBACK;
+  const confirmLookback = opts.confirmLookback ?? CONFIRM_LOOKBACK;
+  const recentBreak = !!lb && lb.dir === bias && ltf.length - 1 - lb.idx <= confirmLookback;
   const last = ltf[ltf.length - 1];
   const prev = ltf[ltf.length - 2];
   const eng = isEngulf(prev, last, bias);
