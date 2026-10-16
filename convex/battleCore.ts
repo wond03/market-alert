@@ -79,6 +79,25 @@ export function hasDisplacement(
   return false;
 }
 
+// firedZone 重置判据：区域被价格「有效破坏」才允许重新标记，取代原先「离开入区即重置」。
+// 破坏 = 收盘穿过区域远端边界（做多→跌破下沿；做空→升破上沿），或结构确认失效
+// （收盘反向穿过导致入场的那次 15m 摆动锚点 dirLast.level）。
+function firedZoneDead(
+  firedZone: string,
+  price: number,
+  dirLast: StructBreak | undefined,
+): boolean {
+  if (!firedZone) return false;
+  const parts = firedZone.split("#");
+  const zBias = parts[0];
+  const zBottom = Number(parts[3]);
+  const zTop = Number(parts[4]);
+  const zoneBroken = zBias === "bull" ? price < zBottom : price > zTop;
+  const structBroken =
+    !!dirLast && (zBias === "bull" ? price < dirLast.level : price > dirLast.level);
+  return zoneBroken || structBroken;
+}
+
 export function battleZones(candles: Candle[], bias: Bias): Zone[] {
   const swing = runStructure(candles, SWING_LEN);
   const atrArr = atr(candles, ATR_LEN);
@@ -356,6 +375,16 @@ export function evaluateBattle(
   if ((dir !== "bull" && dir !== "bear") || !dirFresh) {
     return { bias: "range", firedZone: "", signal: null };
   }
+  // 位移硬过滤：定方向的这根 15m 摆动 BOS/CHoCH 必须带明确位移（同向且范围 ≥ DISP_MULT×ATR）。
+  // 位移不足视为「摆动不明确」→ 方向不明 → 观望，不用内部结构硬定方向。
+  const dirDisp = hasDisplacement(
+    mtf,
+    { kind: "OB", bias: dir as Bias, top: 0, bottom: 0, idx: dirLast!.idx, t: dirLast!.t },
+    atr(mtf, ATR_LEN),
+  );
+  if (!dirDisp) {
+    return { bias: "range", firedZone: "", signal: null };
+  }
   const bias: Bias = dir;
 
   const sweep = sweepQuality(htfSt, htf, bias, SWEEP_LOOKBACK);
@@ -384,7 +413,9 @@ export function evaluateBattle(
   }
 
   if (!inZone) {
-    return { bias, firedZone: "", signal: null }; // 离开所有入区 → 重新布防
+    // 价格离开所有入区：仅当原入区被有效破坏（收盘穿远端边界/结构锚点）才重置，否则保留 firedZone。
+    const dead = firedZoneDead(prevFiredZone, price, dirLast);
+    return { bias, firedZone: dead ? "" : firedZone, signal: null };
   }
 
   const ltfSt = runStructure(ltf, INTERNAL_LEN);
@@ -410,7 +441,9 @@ export function evaluateBattle(
 
   const zoneKey = `${bias}#${inZone.kind}#${inZone.idx}#${inZone.bottom}#${inZone.top}`;
   if (firedZone === zoneKey) {
-    return { bias, firedZone, signal: null };
+    // 同一入区当天去重：仅当原入区被有效破坏才允许重新标记为新区域。
+    const dead = firedZoneDead(firedZone, price, dirLast);
+    return { bias, firedZone: dead ? "" : firedZone, signal: null };
   }
 
   const risk = buildRisk(bias, inZone, htfSt, price, ltfAtr, intradayLevels(mtf, now));
