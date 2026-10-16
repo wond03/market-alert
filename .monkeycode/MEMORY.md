@@ -31,27 +31,15 @@
   - 登录：`npx convex login --no-open --login-flow poll`（设备码，凭据写入 `~/.convex/config.json`）。
   - 推代码：dev `npx convex dev --once`；prod `npx convex deploy`。
   - 运行函数：`npx convex run <module>:<fn> [--prod]`（路径用冒号，写成 `.` 会报 `BadConvexFunctionIdentifier`）。
-  - 环境变量：`npx convex env set/list/get NAME [--prod]`；dev→prod 不回显复制：`npx convex env get NAME | npx convex env set NAME --prod`。变量：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`RULES_SECRET`、`BATTLE`(仅 prod=1)。
-  - 定时任务在 `convex/crons.ts`：`alerts:pollAndCheck` 每分钟、`battle signal` 每分钟、`signal weekly report` 每周一 01:00 UTC（北京 09:00）。
-  - 推送自检：`npx convex run alerts:sendTest [--prod]`。
+  - 环境变量：`npx convex env set/list/get NAME [--prod]`；dev→prod 不回显复制：`npx convex env get NAME | npx convex env set NAME --prod`。变量：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`BATTLE`(仅 prod=1)。
+  - 定时任务在 `convex/crons.ts`：`battle signal` 每分钟、`signal weekly report` 每周一 01:00 UTC（北京 09:00）。
 
 [Project Knowledge Summary]
 - Date: 2026-10-12
-- Context: Discovered by Agent while managing alert rules（含线上踩坑）
-- Category: Troubleshooting & Debugging
+- Context: Discovered by Agent while integrating the dashboard with Convex
+- Category: Operations & Deployment
 - Instructions:
-  - 规则写操作需口令 `RULES_SECRET`（dev/prod 各设，值不入库）；读走公开 query `market:rules`、`market:recentAlerts`，写走公开 mutation `rulesAdmin:upsertRule/deleteRule/setEnabled`（服务端校验）。看盘页「警报设置」面板即此链路。
-  - 坑：`market:replaceRules` 只 insert 不清空旧规则；真正替换需先 `npx convex run market:clearRules [--prod]` 再 `market:replaceRules`。
-  - 突破规则只支持 `prev_ohlc`（tf/offset 取前 N 根 K 线），统一用 **15m 已收盘 K** 判定（实体突破与影线突破都推）；固定价位 `cross_up/cross_down` 走 1m。`prev_session` 已于 2026-10-13 移除（表单/代码已删、线上规则已清）；`SESSION_*` 保留给 SMC/回测。时段=东京 09:00-15:00 / 伦敦 08:00-16:30 / 纽约 09:30-16:00（IANA 自动处理夏令时）。
-  - 坑：改扫描周期必须把周期写进 `scanState.symbol` 的 key（`${exchange}:${symbol}:${interval}`），否则首次会把整批历史当增量回扫、刷屏告警；首次布防/滚动不回扫（rearm 时只按最新一根收盘布防）。清扫描/规则状态无内置 mutation，可临时加 `internalMutation` 删 `ruleState`/`scanState`（勿部署 prod）。
-  - 看盘页纯静态，经 Convex HTTP API 读写：`POST https://<deployment>.convex.cloud/api/query|mutation`，body `{"path":"module:fn","args":{...},"format":"json"}`（CORS 允许任意 Origin）。prod 会把 `throw new Error` 脱敏成 "Server Error"，要透出自定义文本须用 `ConvexError`（出现在 `errorData`）。
-
-[Project Knowledge Summary]
-- Date: 2026-10-12
-- Context: Discovered by Agent while diagnosing duplicate identical Telegram alerts
-- Category: Troubleshooting & Debugging
-- Instructions:
-  - 同一事件收到两条完全相同推送，先怀疑 dev 与 prod 两个部署同时推（共用同一 bot/channel、各自跑 cron）。对比 `market:rules` 与 `market:rules --prod` 是否一致即可确认；保留 prod 时执行 `npx convex run market:clearRules`（不加 `--prod`）清空 dev 规则。
+  - 看盘页纯静态，经 Convex HTTP API 读写：`POST https://<deployment>.convex.cloud/api/query|mutation|action`，body `{"path":"module:fn","args":{...},"format":"json"}`（CORS 允许任意 Origin）。prod 会把 `throw new Error` 脱敏成 "Server Error"，要透出自定义文本须用 `ConvexError`（出现在 `errorData`）。
 
 [Project Knowledge Summary]
 - Date: 2026-10-13
@@ -109,5 +97,5 @@
 - Category: Operations & Deployment
 - Instructions:
   - 看盘页 `market-dashboard/index.html` 的 SMC 叠加、盘面读数与作战面板读数全部走后端 `convex/panel.ts`（`panel:analyze` / `panel:battleStatus`）。改前端后必须 `npm run convex:deploy` 部署后端，否则看盘页叠加/作战面板会报接口不存在。
-  - 看盘页已移除告警规则管理（`rulesAdmin:upsertRule/deleteRule/setEnabled`、RULES_SECRET 输入），仅只读 `market:recentAlerts`；规则改由后端/脚本维护。
+  - 看盘页已移除告警规则管理（原 `rulesAdmin`/`RULES_SECRET`）与告警只读展示（原 `market:recentAlerts`）；线A 通用告警已于 2026-10-17 整体移除（含 `rules`/`ruleState`/`scanState`/`alerts` 表、`market poll` cron、后端 WEEX/OKX）。
   - 排查大文件：opentoken 会把 bash 输出做符号压缩（`$N=` 图例）、把 read/grep 输出卸载；原文在 `~/.config/opentoken/offload/<id>.txt`。用 `node -e` 按行号打印小片段最稳，编辑大 HTML 建议写 node 补丁脚本按行号增删。

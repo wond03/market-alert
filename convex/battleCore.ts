@@ -44,7 +44,6 @@ export type BattleState = {
   zoneStartT: number | null; // 首次入区所在的 5m K 开盘时间（UTC 秒）
 };
 
-export const EMPTY_BATTLE_STATE: BattleState = { firedZone: "", zoneKey: "", zoneStartT: null };
 
 // 回测可覆盖的可调阈值；生产不传，沿用上方常量。
 export type BattleEvalOpts = {

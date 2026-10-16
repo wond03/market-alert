@@ -14,7 +14,7 @@ import { v } from "convex/values";
 import * as exchanges from "./exchanges";
 import type { Candle, Exchange } from "./exchanges";
 import { buildMessage, evaluateBattle, HTF, MTF, LTF } from "./battleCore";
-import { sendTelegram } from "./alerts";
+import { sendTelegram } from "./telegram";
 
 function env(name: string): string {
   const proc = (globalThis as { process?: { env?: Record<string, string> } })
@@ -205,38 +205,6 @@ await ctx.runMutation(internal.battle.upsertState, {
   },
 });
 
-// 手动发送一条样例信号（仅用于预览 TG 排版，不代表实时行情）。
-export const sendSample = internalAction({
-  args: {},
-  handler: async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const text =
-      "【样例 · 非实时信号】\n\n" +
-      buildMessage(
-        "gate",
-        "BTC",
-        "bear",
-        "bear",
-        "BOS",
-        84100,
-        "CHoCH",
-        82236.7,
-        { kind: "OB", bias: "bear", top: 83400, bottom: 83250, idx: 0, t: now },
-        "Pin Bar",
-        "CHoCH",
-        83250,
-        83420,
-        0.00204,
-        81500,
-        1.59,
-        true,
-        83499.6,
-        now,
-      );
-    await sendTelegram(text);
-    return { sent: true };
-  },
-});
 
 // ---- 内部读写 ----
 

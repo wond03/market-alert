@@ -426,10 +426,3 @@ export function computeTrailing(candles: Candle[], size = SWING_LEN): TrailingEx
   return { top, bottom, topIdx, topT, bottomIdx, bottomT };
 }
 
-// 强/弱高、强/弱低标签（依据当前摆动结构方向）
-export function strongWeakLabel(trend: Trend): { high: string; low: string } {
-  return {
-    high: trend === "bear" ? "Strong High" : "Weak High",
-    low: trend === "bull" ? "Strong Low" : "Weak Low",
-  };
-}

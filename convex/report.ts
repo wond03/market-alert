@@ -1,7 +1,7 @@
 import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { sendTelegram } from "./alerts";
+import { sendTelegram } from "./telegram";
 
 // 作战面板周报：体检近 7 天的信号质量与盈亏（入场信号已统一为一条链，只有作战面板）。
 // 已了结交易计盈亏（battle 回填的 stop/target），未了结只计数。
