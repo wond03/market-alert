@@ -1,13 +1,13 @@
-# market-alert 业务逻辑总览
+# 猎场 Vantage 业务逻辑总览
 
 > 更新日期：2026-10-17
-> 定位：Gate 合约行情看盘 + Telegram 告警。盯 BTC / XAU 两个品种，图表给前端，信号推手机。
+> 定位：猎场 Vantage — Gate 合约行情看盘 + Telegram 告警。盯 BTC / XAU 两个品种，图表给前端，信号推手机。
 
 ## 思维导图
 
 ```mermaid
 mindmap
-  root((market-alert 信号系统))
+  root((猎场 Vantage 信号系统))
     数据源
       Gate 合约 REST 与 WSS
       品种 BTC XAU
