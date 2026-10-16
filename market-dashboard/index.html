@@ -110,46 +110,6 @@
   .params input[type="text"] { width: 160px; }
   .param-group { width: 100%; font-size: 12px; font-weight: 700; color: var(--text); margin: 10px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
   .param-box { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 0; }
-  /* 警报设置 */
-  .alert-sec { margin-top: 14px; }
-  .alert-sec-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
-  #alertBody label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-  .rule-form { display: flex; flex-wrap: wrap; gap: 10px 14px; }
-  .rule-form input, .rule-form select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
-  .rule-form input[type="number"] { width: 84px; }
-  .rule-form input[type="text"] { width: 120px; }
-  .rule-form input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
-  .rf-actions { width: 100%; display: flex; gap: 8px; margin-top: 4px; }
-  .rf-actions button, .rule-ops button { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; }
-  .rf-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .rule-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
-  .rule-row:last-child { border-bottom: 0; }
-  .rule-desc { font-size: 12px; }
-  .rule-desc b { color: var(--muted); font-weight: 600; }
-  .rule-ops { display: flex; gap: 6px; flex: none; }
-  .rule-ops button.on { color: #4caf50; border-color: #2e5a33; }
-  .rule-ops button.off { color: var(--muted); }
-  .alert-hint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
-  .alert-hint b { color: var(--text); font-weight: 600; }
-  .alert-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
-  .alert-item { font-size: 12px; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--border); }
-  .alert-item:last-child { border-bottom: 0; }
-  .alert-item b { color: var(--text); font-weight: 600; }
-  .alert-msg { font-size: 12px; margin-left: 6px; }
-  .alert-msg.err { color: #ff6b6b; }
-  .alert-msg.ok { color: #4caf50; }
-  /* 盘面读数 */
-  .readout { flex: none; display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 5px 12px 6px;
-    border-bottom: 1px solid var(--border); font-size: 11px; line-height: 1.55; }
-  .readout:empty { display: none; }
-  .ro-item { display: flex; gap: 5px; white-space: nowrap; }
-  .ro-k { color: var(--muted); }
-  .ro-v { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .ro-v.up { color: var(--up); }
-  .ro-v.down { color: var(--down); }
-  @media (max-width: 720px) {
-    .readout { gap: 1px 12px; padding: 4px 8px 5px; font-size: 10.5px; }
-  }
   /* 作战面板辅助 */
   .bt-note { margin-top: 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
   .bt-bad { color: #ff6b6b; }
@@ -200,7 +160,6 @@
     <div class="group" id="tfGroup"></div>
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
-    <button class="btn-settings" id="btnAlert">警报设置</button>
     <button class="btn-settings" id="btnBattle">作战面板</button>
     <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
   </div>
@@ -218,23 +177,6 @@
       </div>
     </div>
     <div class="modal-body" id="modalBody"></div>
-  </div>
-</div>
-
-<div class="mask" id="alertMask">
-  <div class="modal">
-    <div class="modal-head">
-      <span>警报设置</span>
-      <div class="actions">
-        <button class="primary" id="alertClose">完成</button>
-      </div>
-    </div>
-    <div class="modal-body" id="alertBody">
-      <div class="alert-sec">
-        <div class="alert-sec-title">最近触发</div>
-        <div id="alertList"><div class="alert-empty">加载中…</div></div>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -906,9 +848,15 @@ function candlesToApi(d) {
     return { t: c.time, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume || 0 };
   });
 }
+function smcParams() {
+  var p = (active.smc && active.smc.params) || {};
+  var swing = parseInt(p.swingLen, 10); if (!isFinite(swing) || swing < 2) swing = 8;
+  var internal = parseInt(p.internalLen, 10); if (!isFinite(internal) || internal < 2) internal = 4;
+  return { swing: swing, internal: internal };
+}
 function ensureSmcData(entry) {
   if (!entry || !entry.data || entry.data.length < 10) return;
-  var P = roReadParams();
+  var P = smcParams();
   var key = entry.data.length + ":" + entry.data[entry.data.length - 1].time + ":" + P.swing + ":" + P.internal;
   if (entry.__smcKey === key) return;
   entry.__smcKey = key;
@@ -917,146 +865,10 @@ function ensureSmcData(entry) {
       if (entry.__smcKey !== key) return;
       entry.panelData = res;
       redrawOverlays(entry);
-      renderReadout(entry);
     })
     .catch(function () {});
 }
 /* ================= 盘面读数（只描述状态，不做买卖判断） ================= */
-  function roEsc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
-    });
-  }
-  function roFmtPct(x) { return (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%"; }
-  function roReadParams() {
-    var p = (active.smc && active.smc.params) || {};
-    var swing = parseInt(p.swingLen, 10); if (!isFinite(swing) || swing < 2) swing = 8;
-    var internal = parseInt(p.internalLen, 10); if (!isFinite(internal) || internal < 2) internal = 4;
-    return { swing: swing, internal: internal };
-  }
-  function roStructRow(d, label, res) {
-    var tlab = res.trendAtEnd === "bull" ? "看涨" : (res.trendAtEnd === "bear" ? "看跌" : "震荡");
-    var tone = res.trendAtEnd === "bull" ? "up" : (res.trendAtEnd === "bear" ? "down" : "");
-    var extra = "";
-    var bs = res.breaks;
-    if (bs.length) {
-      var b = bs[bs.length - 1], ago = d.length - 1 - b.idx;
-      extra = "  " + b.tag + " " + (b.dir === "bull" ? "向上" : "向下") + "破 " + bjTimeFmt(d[b.idx].time);
-      if (ago > 0) extra += "（" + ago + "根前）";
-    }
-    return { k: label, v: tlab + extra, tone: tone };
-  }
-  function roNearestSwing(res, price, dir) {
-    var arr = dir === "up" ? res.highs : res.lows, best = null;
-    for (var i = 0; i < arr.length; i++) {
-      var lv = arr[i].price;
-      if (dir === "up") { if (lv > price && (best === null || lv < best)) best = lv; }
-      else { if (lv < price && (best === null || lv > best)) best = lv; }
-    }
-    return best;
-  }
-  function roSessionRuns(entry) {
-    if (state.interval === "1d") return null;
-    var p = active.sessions && active.sessions.params;
-    if (!p) return null;
-    var sessions = readSessions(p);
-    if (!sessions.length) return null;
-    var d = entry.data, runs = [];
-    sessions.forEach(function (se) {
-      var mins = tzMinutesFor(entry, se.tz), cur = null;
-      for (var i = 0; i < d.length; i++) {
-        if (inWindow(mins[i], se.start, se.end)) {
-          if (!cur) cur = { name: se.name, i0: i, i1: i };
-          else cur.i1 = i;
-        } else if (cur) { runs.push(cur); cur = null; }
-      }
-      if (cur) runs.push(cur);
-    });
-    if (!runs.length) return null;
-    runs.sort(function (a, b) { return a.i0 - b.i0; });
-    runs.forEach(function (r) {
-      var hh = -Infinity, ll = Infinity;
-      for (var k = r.i0; k <= r.i1; k++) { if (d[k].high > hh) hh = d[k].high; if (d[k].low < ll) ll = d[k].low; }
-      r.high = hh; r.low = ll;
-    });
-    return runs;
-  }
-
-  function computeReadout(entry) {
-    var d = entry.data;
-    if (!d || d.length < 10) return null;
-    var price = d[d.length - 1].close, dp = priceDp(price);
-    var P = roReadParams();
-    var pd = entry.panelData; if (!pd) { ensureSmcData(entry); return null; }
- var rows = [];
-
-    var swRes = pd.swing;
-    var inRes = pd.internal;
-    rows.push(roStructRow(d, "摆动结构(" + P.swing + ")", swRes));
-    rows.push(roStructRow(d, "内部结构(" + P.internal + ")", inRes));
-
-    var tr = pd.trail;
-    if (isFinite(tr.top) && isFinite(tr.bottom) && tr.top > tr.bottom) {
-      var pct = (price - tr.bottom) / (tr.top - tr.bottom);
-      var zone = pct > 0.55 ? "溢价" : (pct < 0.45 ? "折价" : "均衡");
-      var ztone = pct > 0.55 ? "down" : (pct < 0.45 ? "up" : "");
-      rows.push({ k: "区间位置", v: zone + " " + Math.round(pct * 100) + "%（下 " + fmt(tr.bottom, dp) + " / 上 " + fmt(tr.top, dp) + "）", tone: ztone });
-    }
-
-    var upLv = roNearestSwing(swRes, price, "up"), dnLv = roNearestSwing(swRes, price, "down");
-    rows.push({ k: "上方流动性", v: upLv === null ? "—" : fmt(upLv, dp) + "（" + roFmtPct((upLv - price) / price) + "）", tone: "down" });
-    rows.push({ k: "下方流动性", v: dnLv === null ? "—" : fmt(dnLv, dp) + "（" + roFmtPct((dnLv - price) / price) + "）", tone: "up" });
-
-    var fvgs = pd.fvgs.filter(function (f) { return f.mitigatedIdx === null; });
-    var fUp = null, fDn = null;
-    fvgs.forEach(function (f) {
-      if (f.bottom >= price && (fUp === null || f.bottom < fUp)) fUp = f.bottom;
-      if (f.top <= price && (fDn === null || f.top > fDn)) fDn = f.top;
-    });
-    rows.push({ k: "未填 FVG", v: fvgs.length + " 个（上方最近 " + (fUp === null ? "—" : fmt(fUp, dp)) + " / 下方最近 " + (fDn === null ? "—" : fmt(fDn, dp)) + "）", tone: "" });
-
-    var obs = swRes.orderBlocks.filter(function (o) { return o.mitigatedIdx === null; });
-    var obUp = null, obDn = null;
-    obs.forEach(function (o) {
-      if (o.low >= price && (obUp === null || o.low < obUp)) obUp = o.low;
-      if (o.high <= price && (obDn === null || o.high > obDn)) obDn = o.high;
-    });
-    rows.push({ k: "订单块", v: obs.length + " 个（上方最近 " + (obUp === null ? "—" : fmt(obUp, dp)) + " / 下方最近 " + (obDn === null ? "—" : fmt(obDn, dp)) + "）", tone: "" });
-
-    var runs = roSessionRuns(entry);
-    if (runs) {
-      var li = d.length - 1, cur = null;
-      for (var i = runs.length - 1; i >= 0; i--) { if (runs[i].i0 <= li && runs[i].i1 >= li) { cur = runs[i]; break; } }
-      if (cur) {
-        rows.push({ k: "当前盘段", v: cur.name + " · 高 " + fmt(cur.high, dp) + " / 低 " + fmt(cur.low, dp), tone: "" });
-        var idx = runs.indexOf(cur);
-        if (idx > 0) {
-          var prev = runs[idx - 1], swept = [];
-          if (cur.high > prev.high) swept.push("上方(" + prev.name + "高)");
-          if (cur.low < prev.low) swept.push("下方(" + prev.name + "低)");
-          rows.push({ k: "盘段互动", v: swept.length ? "已扫 " + swept.join("、") : "未破上一盘段高低", tone: swept.length ? "down" : "" });
-        }
-      } else {
-        rows.push({ k: "当前盘段", v: "盘间（不在任何时段内）", tone: "" });
-      }
-    }
-    return rows;
-  }
-
-  function renderReadout(entry) {
-    var el = entry.readoutEl;
-    if (!el) return;
-    var rows = null;
-    try { rows = computeReadout(entry); } catch (e) { rows = null; }
-    if (!rows || !rows.length) { el.innerHTML = ""; return; }
-    var html = "";
-    rows.forEach(function (r) {
-      var tone = r.tone ? " " + r.tone : "";
-      html += '<div class="ro-item"><span class="ro-k">' + roEsc(r.k) + '</span><span class="ro-v' + tone + '">' + roEsc(r.v) + '</span></div>';
-    });
-    el.innerHTML = html;
-  }
-
   function drawSMC(entry) {
     var el = entry.smcEl;
     if (!el) return;
@@ -1332,7 +1144,6 @@ function ensureSmcData(entry) {
     applyIndicatorData(entry);
     if (range) { try { entry.mainChart.timeScale().setVisibleLogicalRange(range); } catch (e) {} }
     redrawOverlays(entry);
-    renderReadout(entry);
   }
 
   function applyIndicatorData(entry) {
@@ -1418,7 +1229,6 @@ function ensureSmcData(entry) {
       applyIndicatorData(entry);
       applyView(entry);
       redrawOverlays(entry);
-      renderReadout(entry);
     });
   }
 
@@ -1471,7 +1281,6 @@ function ensureSmcData(entry) {
     entry.candles.update(candle);
     applyIndicatorData(entry);
     redrawOverlays(entry);
-    renderReadout(entry);
   }
 
   function onWsMessage(raw) {
@@ -1736,7 +1545,6 @@ function ensureSmcData(entry) {
             '<span>指数<b data-role="idx">--</b></span>' +
           '</span>' +
         '</div>' +
-        '<div class="readout" data-role="readout"></div>' +
         '<div class="main-wrap">' +
           '<div class="sessions-overlay" data-role="sessions"></div>' +
           '<div class="sessions-overlay" data-role="smc"></div>' +
@@ -1766,7 +1574,6 @@ function ensureSmcData(entry) {
         inst: inst, panel: panel, data: [], mainChart: mc, candles: candles,
         subContainer: subEl, mainOverlays: [], subPanes: [], autoScale: true, logScale: false,
         mainWrap: mainWrap, sessionsEl: sessionsEl, sessionsOn: false, smcEl: smcEl, smcOn: false, btnNow: btnNow,
-        readoutEl: panel.querySelector('[data-role="readout"]')
       };
       mc.timeScale().subscribeVisibleLogicalRangeChange(function () { redrawOverlays(entry); updateNowBtn(entry); });
       btnNow.addEventListener("click", function () { try { mc.timeScale().scrollToRealTime(); } catch (e) {} updateNowBtn(entry); });
@@ -1786,9 +1593,8 @@ function ensureSmcData(entry) {
     });
   }
 
-  /* ============ 警报设置（读写 Convex） ============ */
+  /* ============ Convex 客户端 ============ */
   var CONVEX_URL = "https://efficient-cod-911.convex.cloud";
-  var alertEditingId = null;
 
   function convexError(res) {
     if (res && res.errorData !== undefined && res.errorData !== null) {
@@ -1817,47 +1623,7 @@ function ensureSmcData(entry) {
     });
   }
   function convexQuery(path, args) { return convexPost("query", path, args); }
-  function convexMutation(path, args) { return convexPost("mutation", path, args); }
 function convexAction(path, args) { return convexPost("action", path, args); }
-
-
-
-
-
-  function renderAlertList(alerts) {
-    var el = document.getElementById("alertList");
-    el.innerHTML = "";
-    if (!alerts || !alerts.length) { el.innerHTML = '<div class="alert-empty">暂无触发</div>'; return; }
-    alerts.forEach(function (a) {
-      var div = document.createElement("div"); div.className = "alert-item";
-      var t = new Date(a.ts * 1000);
-      var hh = ("0" + t.getHours()).slice(-2), mm = ("0" + t.getMinutes()).slice(-2);
-      var txt = String(a.text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      var b = document.createElement("b");
-      b.textContent = hh + ":" + mm;
-      div.appendChild(b);
-      div.appendChild(document.createTextNode(" " + txt));
-      el.appendChild(div);
-    });
-  }
-
- function refreshAlertData() {
- convexQuery("market:recentAlerts", { limit: 20 }).then(function (alerts) { renderAlertList(alerts); })
- .catch(function () {});
- }
-
- function openAlert() {
- document.getElementById("alertMask").classList.add("show");
- refreshAlertData();
- }
- function closeAlert() { document.getElementById("alertMask").classList.remove("show"); }
-
- function wireAlertUI() {
- document.getElementById("btnAlert").addEventListener("click", openAlert);
- document.getElementById("alertClose").addEventListener("click", closeAlert);
- document.getElementById("alertMask").addEventListener("click", function (e) { if (e.target.id === "alertMask") closeAlert(); });
- }
-
   /* ================= SMC 作战面板 =================
      脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 价格进入入区且出现低周期同向确认才提示 → 区域外止损 → 前高前低/流动性止盈。
      跨周期取数（方向 / 区域 / 入场），结构与入区判定全部由后端 panel:battleStatus 计算（单一事实来源）。 */
@@ -2043,7 +1809,6 @@ var BT_KEY = "market-dashboard:battle:v1";
 
   window.addEventListener("beforeunload", captureViewBars);
   window.__md = { get charts() { return charts; }, state: state, getViewBars: function () { return viewBars; } };
-  wireAlertUI();
   wireBattleUI();
   buildToolbar();
   buildTabs();
