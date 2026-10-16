@@ -25,6 +25,8 @@ type Trade = {
   exit: number;
   openedTs: number;
   closedTs: number;
+  confirm?: string; // battle：5m 触发类型
+  zoneKind?: string; // battle：OB | FVG
 };
 
 type SysData = { openedTs: number[]; closed: Trade[] };
@@ -109,6 +111,8 @@ export const reportData = internalQuery({
           exit: r.exitPrice,
           openedTs: r.sigTs,
           closedTs: r.closedTs,
+          confirm: r.confirm,
+          zoneKind: r.zoneKind,
         });
       }
     }
@@ -199,10 +203,52 @@ export const weeklyReport = internalAction({
     }
     lines.push("");
 
+    lines.push("<b>归因</b>");
+    const trigLabel = (c: string) => c.replace("向上", "").replace("向下", "").trim() || c;
+    const dirBuckets: [string, Trade[]][] = [
+      ["多", all.filter((t) => t.dir > 0)],
+      ["空", all.filter((t) => t.dir < 0)],
+    ];
+    const trigBuckets: [string, Trade[]][] = [...new Set(bClosed.map((t) => trigLabel(t.confirm ?? "")))].map((k) => [
+      k || "其他",
+      bClosed.filter((t) => trigLabel(t.confirm ?? "") === k),
+    ]);
+    const zoneBuckets: [string, Trade[]][] = ["OB", "FVG"].map((k) => [k, bClosed.filter((t) => t.zoneKind === k)]);
+    const dims: { key: string; buckets: [string, Trade[]][] }[] = [
+      { key: "方向", buckets: dirBuckets },
+      { key: "触发", buckets: trigBuckets },
+      { key: "区域", buckets: zoneBuckets },
+    ];
+    for (const d of dims) {
+      const seg = d.buckets
+        .filter(([, ts]) => ts.length > 0)
+        .map(([lab, ts]) => {
+          const m = metrics(ts);
+          return `${lab} ${m.wins}/${m.losses} ${sgn(m.sumR)}R`;
+        })
+        .join(" · ");
+      if (seg) lines.push(`${d.key}：${seg}`);
+    }
+    lines.push("");
+
     lines.push("<b>风险指标</b>");
     lines.push(`作战面板：最大回撤 ${sgn(bm.mdd)}R  最大连亏 ${bm.maxLoss} 笔  平均持仓 ${Number.isNaN(bm.avgHoldH) ? "-" : bm.avgHoldH.toFixed(1) + "h"}`);
     lines.push(`SMC：最大回撤 ${sgn(sm.mdd)}R  最大连亏 ${sm.maxLoss} 笔  平均持仓 ${Number.isNaN(sm.avgHoldH) ? "-" : sm.avgHoldH.toFixed(1) + "h"}`);
     lines.push(`合计：最大回撤 ${sgn(am.mdd)}R  最大连亏 ${am.maxLoss} 笔  平均持仓 ${Number.isNaN(am.avgHoldH) ? "-" : am.avgHoldH.toFixed(1) + "h"}`);
+
+    const MIN_N = 3;
+    const cands: { dim: string; lab: string; m: Metrics }[] = [];
+    for (const d of dims)
+      for (const [lab, ts] of d.buckets) if (ts.length >= MIN_N) cands.push({ dim: d.key, lab, m: metrics(ts) });
+    const best = cands.filter((c) => c.m.expR > 0).sort((a, b) => b.m.expR - a.m.expR)[0];
+    const worst = cands.filter((c) => c.m.expR < 0).sort((a, b) => a.m.expR - b.m.expR)[0];
+
+    lines.push("");
+    lines.push("<b>结论</b>");
+    lines.push(best ? `最优：${best.dim}=${best.lab}（n=${best.m.n} 胜率 ${pctOf(best.m)} 期望 ${sgn(best.m.expR)}R）` : "最优：样本不足（各维度 n<3）");
+    lines.push(worst ? `最差：${worst.dim}=${worst.lab}（n=${worst.m.n} 胜率 ${pctOf(worst.m)} 期望 ${sgn(worst.m.expR)}R）` : "最差：样本不足");
+    lines.push(worst ? `建议：${worst.dim}=${worst.lab} 期望为负，考虑收紧条件或暂停该组合。` : "建议：已归因维度期望均为正，维持当前规则。");
+    if (am.n < 10) lines.push(`注：本周 ${am.n} 笔了结，样本偏小，结论仅供参考。`);
 
     await sendTelegram(lines.join("\n"));
     return { sent: true };
