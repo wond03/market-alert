@@ -41,7 +41,8 @@ export type StructBreak = {
   t: number;
   dir: Bias;
   tag: Tag;
-  level: number; // 被突破的摆动点价位
+  level: number; // 被突破的摆动点价位（BOS/CHoCH 的突破位，= 被上/下穿的前高/前低）
+  anchor: number; // 结构锚点：做多=突破前最近摆动低点(Higher Low)，做空=最近摆动高点(Lower High)
   pivotIdx: number;
   pivotT: number;
 };
@@ -236,7 +237,7 @@ export function runStructure(
       const tag: Tag = trend === "bear" ? "CHoCH" : "BOS";
       curHigh.crossed = true;
       trend = "bull";
-      breaks.push({ idx: i, t: candles[i].t, dir: "bull", tag, level: curHigh.level, pivotIdx: curHigh.idx, pivotT: curHigh.t });
+      breaks.push({ idx: i, t: candles[i].t, dir: "bull", tag, level: curHigh.level, anchor: lows.length ? lows[lows.length - 1].price : curLow.level, pivotIdx: curHigh.idx, pivotT: curHigh.t });
       orderBlocks.push(makeOrderBlock(candles, curHigh.idx, i, "bull", parsedHigh, parsedLow));
     }
     // 看跌结构突破：收盘下穿摆动低点
@@ -244,7 +245,7 @@ export function runStructure(
       const tag: Tag = trend === "bull" ? "CHoCH" : "BOS";
       curLow.crossed = true;
       trend = "bear";
-      breaks.push({ idx: i, t: candles[i].t, dir: "bear", tag, level: curLow.level, pivotIdx: curLow.idx, pivotT: curLow.t });
+      breaks.push({ idx: i, t: candles[i].t, dir: "bear", tag, level: curLow.level, anchor: highs.length ? highs[highs.length - 1].price : curHigh.level, pivotIdx: curLow.idx, pivotT: curLow.t });
       orderBlocks.push(makeOrderBlock(candles, curLow.idx, i, "bear", parsedHigh, parsedLow));
     }
     prevClose = close;

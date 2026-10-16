@@ -23,7 +23,7 @@ export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
 export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
-export const INTERNAL_CONFIRM_LOOKBACK = 3; // 最近 N 根 15m 内部结构的同向突破算「确认 1」
+export const INTERNAL_CONFIRM_LOOKBACK = 3; // 最近 N 根 15m 内部结构的同向突破算「确认 1」（待回测对比 4–5 根：3 根=45 分钟是否足够完成入区回调结束确认）
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
@@ -81,7 +81,8 @@ export function hasDisplacement(
 
 // firedZone 重置判据：区域被价格「有效破坏」才允许重新标记，取代原先「离开入区即重置」。
 // 破坏 = 收盘穿过区域远端边界（做多→跌破下沿；做空→升破上沿），或结构确认失效
-// （收盘反向穿过导致入场的那次 15m 摆动锚点 dirLast.level）。
+// （收盘反向穿过导致入场那次摆动的结构锚点 dirLast.anchor：做多=该次突破前最近摆动低点 Higher Low，
+//  做空=最近摆动高点 Lower High；注意此处用的是结构锚点，不是 BOS/CHoCH 的突破位 dirLast.level）。
 function firedZoneDead(
   firedZone: string,
   price: number,
@@ -94,7 +95,7 @@ function firedZoneDead(
   const zTop = Number(parts[4]);
   const zoneBroken = zBias === "bull" ? price < zBottom : price > zTop;
   const structBroken =
-    !!dirLast && (zBias === "bull" ? price < dirLast.level : price > dirLast.level);
+    !!dirLast && (zBias === "bull" ? price < dirLast.anchor : price > dirLast.anchor);
   return zoneBroken || structBroken;
 }
 
