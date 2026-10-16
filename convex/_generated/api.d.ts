@@ -17,6 +17,7 @@ import type * as gate from "../gate.js";
 import type * as luxSmc from "../luxSmc.js";
 import type * as market from "../market.js";
 import type * as paper from "../paper.js";
+import type * as report from "../report.js";
 import type * as rulesAdmin from "../rulesAdmin.js";
 import type * as smc from "../smc.js";
 import type * as smcCore from "../smcCore.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   luxSmc: typeof luxSmc;
   market: typeof market;
   paper: typeof paper;
+  report: typeof report;
   rulesAdmin: typeof rulesAdmin;
   smc: typeof smc;
   smcCore: typeof smcCore;
