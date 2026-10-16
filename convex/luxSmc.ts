@@ -41,8 +41,12 @@ export type StructBreak = {
   t: number;
   dir: Bias;
   tag: Tag;
-  level: number; // 被突破的摆动点价位（BOS/CHoCH 的突破位，= 被上/下穿的前高/前低）
-  anchor: number; // 结构锚点：做多=突破前最近摆动低点(Higher Low)，做空=最近摆动高点(Lower High)
+  // level 与 anchor 含义不同，勿混用：
+  //   level  = 本次 BOS/CHoCH 的「突破位」= 被上/下穿的摆动高/低点（做多=前高，做空=前低），用于展示突破价位。
+  //   anchor = 定方向的结构「锚点」= 突破前最后一个反向摆动点（做多=Higher Low 摆动低，做空=Lower High 摆动高），
+  //            用于判定结构失效（价格反向收盘穿过锚点）。
+  level: number;
+  anchor: number;
   pivotIdx: number;
   pivotT: number;
 };
