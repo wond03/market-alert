@@ -6,7 +6,4 @@ const crons = cronJobs();
 // 每分钟运行 SMC 入场信号：1h 背景 → 15m 方向 + OB/FVG 入区 → 5m 同向确认入场 → 入库 + 推送。
 crons.interval("battle signal", { minutes: 1 }, internal.battle.scan, {});
 
-// 每周一 09:00（北京 = 01:00 UTC）推送信号系统近 7 天周报（作战面板 + SMC）到 Telegram。
-crons.weekly("signal weekly report", { dayOfWeek: "monday", hourUTC: 1, minuteUTC: 0 }, internal.report.weeklyReport, {});
-
 export default crons;

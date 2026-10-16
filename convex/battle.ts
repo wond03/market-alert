@@ -143,9 +143,39 @@ const prev = {
   zoneKey: state?.zoneKey ?? "",
   zoneStartT: state?.zoneStartT ?? null,
 };
-const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol);
+ const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol);
 
-let firedZone = res.firedZone;
+ // 漏斗：活动区域推进到哪一层，落库（每层只记一次）。
+ if (res.funnel) {
+ await ctx.runMutation(internal.battle.recordFunnel, {
+ key,
+ exchange: EXCHANGE,
+ symbol,
+ zoneKey: res.funnel.zoneKey,
+ zoneStartT: res.funnel.zoneStartT,
+ c1T: res.funnel.c1T,
+ c2T: res.funnel.c2T,
+ confirmed: res.funnel.confirmed,
+ now,
+ });
+ }
+ // 上一个跟踪区域未经确认就离场 / 失效 → 记为失效层。
+ if (prev.zoneKey && prev.zoneKey !== res.zoneKey) {
+ await ctx.runMutation(internal.battle.recordFunnel, {
+ key,
+ exchange: EXCHANGE,
+ symbol,
+ zoneKey: prev.zoneKey,
+ zoneStartT: prev.zoneStartT ?? now,
+ c1T: null,
+ c2T: null,
+ confirmed: false,
+ invalid: true,
+ now,
+ });
+ }
+
+ let firedZone = res.firedZone;
       if (res.signal) {
         // 上一笔未了结信号仍在（新信号到来）→ 记为「被取代」。
         if (openTs != null && openDir) {
@@ -301,9 +331,66 @@ export const insertOutcome = internalMutation({
     exitPrice: v.number(),
     createdAt: v.number(),
   },
-  handler: async (ctx, args) => {
-    await ctx.db.insert("battleOutcomes", args);
-  },
+ handler: async (ctx, args) => {
+ await ctx.db.insert("battleOutcomes", args);
+ },
+});
+
+// 漏斗：按区域指纹 upsert，只补齐缺失的层级时间戳，不覆盖已记录层级。
+export const recordFunnel = internalMutation({
+ args: {
+ key: v.string(),
+ exchange: v.string(),
+ symbol: v.string(),
+ zoneKey: v.string(),
+ zoneStartT: v.number(),
+ c1T: v.union(v.number(), v.null()),
+ c2T: v.union(v.number(), v.null()),
+ confirmed: v.boolean(),
+ invalid: v.optional(v.boolean()),
+ now: v.number(),
+ },
+ handler: async (ctx, a) => {
+ const fp = `${a.key}|${a.zoneKey}`;
+ const existing = await ctx.db
+ .query("battleFunnel")
+ .withIndex("by_fp", (q) => q.eq("fp", fp))
+ .unique();
+ if (!existing) {
+ await ctx.db.insert("battleFunnel", {
+ key: a.key,
+ exchange: a.exchange,
+ symbol: a.symbol,
+ zoneKey: a.zoneKey,
+ fp,
+ zoneStartT: a.zoneStartT,
+ enteredTs: a.now,
+ c1Ts: a.c1T ?? null,
+ c2Ts: a.c2T ?? null,
+ confirmedTs: a.confirmed ? a.now : null,
+ invalidTs: a.invalid ? a.now : null,
+ updatedAt: a.now,
+ });
+ return;
+ }
+ const patch: {
+ updatedAt: number;
+ c1Ts?: number | null;
+ c2Ts?: number | null;
+ confirmedTs?: number | null;
+ invalidTs?: number | null;
+ } = { updatedAt: a.now };
+ if (existing.c1Ts == null && a.c1T != null) patch.c1Ts = a.c1T;
+ if (existing.c2Ts == null && a.c2T != null) patch.c2Ts = a.c2T;
+ if (existing.confirmedTs == null && a.confirmed) patch.confirmedTs = a.now;
+ if (
+ a.invalid &&
+ existing.confirmedTs == null &&
+ existing.invalidTs == null
+ )
+ patch.invalidTs = a.now;
+ await ctx.db.patch(existing._id, patch);
+ },
 });
 
 // ---- 公开查询（只读） ----

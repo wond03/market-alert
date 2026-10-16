@@ -1,105 +1,104 @@
-import { internalAction, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { sendTelegram } from "./telegram";
 
-// 作战面板周报：体检近 7 天的信号质量与盈亏（入场信号已统一为一条链，只有作战面板）。
-// 已了结交易计盈亏（battle 回填的 stop/target），未了结只计数。
-// 口径：R = 以止损风险为单位（止损 -1R）；% = 入场价收益率。仅 BATTLE=1 的部署（prod）执行。
+// 作战面板报表：只读聚合，供 report.html 展示。
+// 账户口径：本金 100U、名义 500U、杠杆 100x、每笔保证金 5U、双边 taker 0.05%，不加滞点。
+// 指标统一用「扣费后净 R」。
 
 const DAY = 86400;
-const BJ = 8 * 3600;
-const SYMBOLS = ["BTC", "XAU"];
 
-function env(name: string): string {
-  const proc = (globalThis as { process?: { env?: Record<string, string> } }).process;
-  return proc?.env?.[name] ? String(proc.env[name]).trim() : "";
-}
+const PRINCIPAL = 100; // 账户本金 USDT
+const NOTIONAL = 500; // 每笔名义 USDT
+const LEVERAGE = 100; // 杠杆
+const MARGIN = NOTIONAL / LEVERAGE; // 每笔保证金 USDT
+const TAKER = 0.0005; // 单边 taker
+const FEE_PER_TRADE = NOTIONAL * TAKER * 2; // 双边手续费 USDT
 
-type Trade = {
+type RawTrade = {
   symbol: string;
-  dir: number; // 1 多 / -1 空
+  dir: number;
   entry: number;
   stop: number;
   exit: number;
   openedTs: number;
   closedTs: number;
-  confirm?: string; // 5m 触发类型
-  zoneKind?: string; // OB | FVG
+  confirm: string;
+  zoneKind: string;
 };
-type ReportData = { openedTs: number[]; closed: Trade[] };
 
-function tradeR(t: Trade): number {
+type Trade = RawTrade & {
+  notional: number;
+  leverage: number;
+  margin: number;
+  fee: number;
+  riskUsd: number;
+  riskPct: number;
+  pnlUsd: number;
+  rNet: number;
+};
+
+function grossR(t: RawTrade): number {
   const risk = Math.abs(t.entry - t.stop);
-  return risk > 0 ? (t.dir * (t.exit - t.entry)) / risk : 0;
-}
-function tradePct(t: Trade): number {
-  return t.entry !== 0 ? (t.dir * (t.exit - t.entry)) / t.entry * 100 : 0;
-}
-function bjDayKey(ts: number): number {
-  return Math.floor((ts + BJ) / DAY);
-}
-function bjDayLabel(key: number): string {
-  const d = new Date(key * DAY * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} 周${["日", "一", "二", "三", "四", "五", "六"][d.getUTCDay()]}`;
-}
-function sgn(x: number): string {
-  return `${x >= 0 ? "+" : ""}${x.toFixed(2)}`;
-}
-function pctOf(m: Metrics): string {
-  return m.n ? `${Math.round(m.winRate)}%` : "-";
+  if (risk <= 0) return 0;
+  return (t.dir * (t.exit - t.entry)) / risk;
 }
 
-type Metrics = {
-  n: number;
-  wins: number;
-  losses: number;
-  winRate: number;
-  sumR: number;
-  sumPct: number;
-  expR: number;
-  mdd: number;
-  maxLoss: number;
-  avgHoldH: number;
-};
-function metrics(list: Trade[]): Metrics {
-  const n = list.length;
-  const wins = list.filter((t) => tradeR(t) > 0).length;
-  const sumR = list.reduce((a, t) => a + tradeR(t), 0);
-  const sumPct = list.reduce((a, t) => a + tradePct(t), 0);
-  let peak = 0;
-  let cum = 0;
+function decorate(t: RawTrade): Trade {
+  const stopPct = Math.abs(t.entry - t.stop) / (t.entry || 1);
+  const riskUsd = NOTIONAL * stopPct;
+  const pnlUsd = grossR(t) * riskUsd - FEE_PER_TRADE;
+  const rNet = riskUsd > 0 ? pnlUsd / riskUsd : 0;
+  return {
+    ...t,
+    notional: NOTIONAL,
+    leverage: LEVERAGE,
+    margin: MARGIN,
+    fee: FEE_PER_TRADE,
+    riskUsd,
+    riskPct: riskUsd / PRINCIPAL,
+    pnlUsd,
+    rNet,
+  };
+}
+
+function maxDrawdown(equity: number[]): number {
+  let peak = -Infinity;
   let mdd = 0;
-  for (const t of list) {
-    cum += tradeR(t);
-    peak = Math.max(peak, cum);
-    mdd = Math.min(mdd, cum - peak);
+  for (const v of equity) {
+    if (v > peak) peak = v;
+    const dd = peak - v;
+    if (dd > mdd) mdd = dd;
   }
-  let streak = 0;
-  let maxLoss = 0;
-  for (const t of list) {
-    if (tradeR(t) < 0) {
-      streak++;
-      maxLoss = Math.max(maxLoss, streak);
-    } else streak = 0;
-  }
-  const avgHoldH = n ? list.reduce((a, t) => a + (t.closedTs - t.openedTs), 0) / n / 3600 : NaN;
-  return { n, wins, losses: n - wins, winRate: n ? (wins / n) * 100 : NaN, sumR, sumPct, expR: n ? sumR / n : NaN, mdd, maxLoss, avgHoldH };
+  return mdd;
 }
 
-// 指定时间之后触发的全部作战面板信号：已了结交易 + 全部开仓时间（用于按日开仓计数）。
-export const reportData = internalQuery({
-  args: { since: v.number() },
-  handler: async (ctx, { since }): Promise<ReportData> => {
+function curve(trades: Trade[], to: (t: Trade) => number): number[] {
+  let acc = 0;
+  return trades.map((t) => (acc += to(t)));
+}
+
+export const pageData = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, { days }) => {
+    const win = days && days > 0 ? Math.floor(days) : 7;
+    const now = Math.floor(Date.now() / 1000);
+    const since = now - win * DAY;
+    const since30 = now - 30 * DAY;
+
     const rows = await ctx.db
       .query("battleSignals")
-      .withIndex("by_sigTs", (q) => q.gte("sigTs", since))
+      .withIndex("by_sigTs", (q) => q.gte("sigTs", since30))
       .collect();
-    const closed: Trade[] = [];
+
+    const openedTs = rows.map((r) => r.sigTs);
+    const raw: RawTrade[] = [];
     for (const r of rows) {
-      if ((r.result === "stop" || r.result === "target") && r.exitPrice != null && r.closedTs != null) {
-        closed.push({
+      if (
+        (r.result === "stop" || r.result === "target") &&
+        r.exitPrice != null &&
+        r.closedTs != null
+      ) {
+        raw.push({
           symbol: r.symbol,
           dir: r.bias === "long" ? 1 : -1,
           entry: r.entryPrice,
@@ -112,102 +111,148 @@ export const reportData = internalQuery({
         });
       }
     }
-    return { openedTs: rows.map((r) => r.sigTs), closed };
-  },
-});
+    raw.sort((a, b) => a.closedTs - b.closedTs);
+    const all = raw.map(decorate);
 
-export const weeklyReport = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ skipped?: boolean; sent?: boolean }> => {
-    if (env("BATTLE") !== "1") return { skipped: true };
+    // 窗口内已了结交易与开仓计数。
+    const closed = all.filter((t) => t.closedTs >= since);
+    const openedN = openedTs.filter((ts) => ts >= since).length;
 
-    const now = Math.floor(Date.now() / 1000);
-    const todayKey = bjDayKey(now);
-    const startKey = todayKey - 6;
-    const since = startKey * DAY - BJ; // 北京 00:00（起始日）
+    const n = closed.length;
+    const wins = closed.filter((t) => t.pnlUsd > 0).length;
+    const losses = closed.filter((t) => t.pnlUsd < 0).length;
+    const sumR = closed.reduce((a, t) => a + t.rNet, 0);
+    const sumUsd = closed.reduce((a, t) => a + t.pnlUsd, 0);
+    const sumPct = (sumUsd / PRINCIPAL) * 100;
+    const expR = n > 0 ? sumR / n : 0;
 
-    const data = (await ctx.runQuery(internal.report.reportData, { since })) as ReportData;
-    const closed = data.closed.sort((a, b) => a.closedTs - b.closedTs);
-    const m = metrics(closed);
-    const openN = data.openedTs.length - closed.length;
-
-    const lines: string[] = [];
-    lines.push("<b>作战面板周报 · 近 7 天</b>");
-    lines.push(`区间：${bjDayLabel(startKey)} ~ ${bjDayLabel(todayKey)}（北京）`);
-    lines.push("口径：R=止损风险为单位（止损 -1R）；%=入场价收益率");
-    lines.push("");
-
-    lines.push("<b>总览</b>");
-    lines.push(
-      `开 ${data.openedTs.length} 平 ${m.n}（${m.wins}/${m.losses} ${pctOf(m)}）期望 ${sgn(m.expR)}R 累计 ${sgn(m.sumR)}R / ${sgn(m.sumPct)}%  未平仓 ${openN}`,
-    );
-    lines.push("");
-
-    lines.push("<b>按日盈亏</b>");
-    let running = 0;
-    for (let k = startKey; k <= todayKey; k++) {
-      const opened = data.openedTs.filter((ts) => bjDayKey(ts) === k).length;
-      const dayTrades = closed.filter((t) => bjDayKey(t.closedTs) === k);
-      const dayR = dayTrades.reduce((a, t) => a + tradeR(t), 0);
-      const dayPct = dayTrades.reduce((a, t) => a + tradePct(t), 0);
-      running += dayR;
-      lines.push(`${bjDayLabel(k)}：开 ${opened} 平 ${dayTrades.length}  ${sgn(dayR)}R (${sgn(dayPct)}%)  累计 ${sgn(running)}R`);
-    }
-    lines.push("");
-
-    lines.push("<b>分标的</b>");
-    for (const sym of SYMBOLS) {
-      const sm = metrics(closed.filter((t) => t.symbol === sym));
-      lines.push(`${sym}：平 ${sm.n} (${sm.wins}/${sm.losses} ${pctOf(sm)}) 累计 ${sgn(sm.sumR)}R / ${sgn(sm.sumPct)}%`);
-    }
-    lines.push("");
-
-    lines.push("<b>归因</b>");
-    const trigLabel = (c: string) => c.replace("向上", "").replace("向下", "").trim() || c;
-    const dirBuckets: [string, Trade[]][] = [
-      ["多", closed.filter((t) => t.dir > 0)],
-      ["空", closed.filter((t) => t.dir < 0)],
+    // R 倍数分布（净 R）。
+    const buckets: [string, (x: number) => boolean][] = [
+      ["≤-1", (x) => x <= -1],
+      ["-1~0", (x) => x > -1 && x < 0],
+      ["0~1", (x) => x >= 0 && x < 1],
+      ["1~2", (x) => x >= 1 && x < 2],
+      ["2~3", (x) => x >= 2 && x < 3],
+      ["≥3", (x) => x >= 3],
     ];
-    const trigBuckets: [string, Trade[]][] = [...new Set(closed.map((t) => trigLabel(t.confirm ?? "")))].map((k) => [
-      k || "其他",
-      closed.filter((t) => trigLabel(t.confirm ?? "") === k),
-    ]);
-    const zoneBuckets: [string, Trade[]][] = ["OB", "FVG"].map((k) => [k, closed.filter((t) => t.zoneKind === k)]);
-    const dims: { key: string; buckets: [string, Trade[]][] }[] = [
-      { key: "方向", buckets: dirBuckets },
-      { key: "触发", buckets: trigBuckets },
-      { key: "区域", buckets: zoneBuckets },
+    const rBuckets = buckets.map(([label, f]) => ({
+      label,
+      count: closed.filter((t) => f(t.rNet)).length,
+    }));
+
+    // 归因：方向 / 触发 / 区域。
+    const trigLabel = (c: string) =>
+      c.replace("向上", "").replace("向下", "").trim() || c;
+    const dims: { dim: string; key: (t: Trade) => string }[] = [
+      { dim: "方向", key: (t) => (t.dir > 0 ? "多" : "空") },
+      { dim: "触发", key: (t) => trigLabel(t.confirm) || "其他" },
+      { dim: "区域", key: (t) => t.zoneKind },
     ];
+    const attribution: { dim: string; label: string; n: number; expR: number; sumR: number }[] =
+      [];
     for (const d of dims) {
-      const seg = d.buckets
-        .filter(([, ts]) => ts.length > 0)
-        .map(([lab, ts]) => {
-          const bm = metrics(ts);
-          return `${lab} ${bm.wins}/${bm.losses} ${sgn(bm.sumR)}R`;
-        })
-        .join(" · ");
-      if (seg) lines.push(`${d.key}：${seg}`);
+      const labels = [...new Set(closed.map(d.key))];
+      for (const label of labels) {
+        const sub = closed.filter((t) => d.key(t) === label);
+        if (!sub.length) continue;
+        const s = sub.reduce((a, t) => a + t.rNet, 0);
+        attribution.push({
+          dim: d.dim,
+          label,
+          n: sub.length,
+          expR: s / sub.length,
+          sumR: s,
+        });
+      }
     }
-    lines.push("");
 
-    lines.push("<b>风险指标</b>");
-    lines.push(`最大回撤 ${sgn(m.mdd)}R  最大连亏 ${m.maxLoss} 笔  平均持仓 ${Number.isNaN(m.avgHoldH) ? "-" : m.avgHoldH.toFixed(1) + "h"}`);
+    // 回撤：周（窗口）与月（30 天）。
+    const dd = (list: Trade[]) => {
+      if (!list.length) return { mddR: 0, mddUsd: 0, mddPct: 0 };
+      return {
+        mddR: maxDrawdown(curve(list, (t) => t.rNet)),
+        mddUsd: maxDrawdown(curve(list, (t) => t.pnlUsd)),
+        mddPct: maxDrawdown(curve(list, (t) => (t.pnlUsd / PRINCIPAL) * 100)),
+      };
+    };
 
-    const MIN_N = 3;
-    const cands: { dim: string; lab: string; m: Metrics }[] = [];
-    for (const d of dims)
-      for (const [lab, ts] of d.buckets) if (ts.length >= MIN_N) cands.push({ dim: d.key, lab, m: metrics(ts) });
-    const best = cands.filter((c) => c.m.expR > 0).sort((a, b) => b.m.expR - a.m.expR)[0];
-    const worst = cands.filter((c) => c.m.expR < 0).sort((a, b) => a.m.expR - b.m.expR)[0];
+    // 漏斗：区域内各层通过。
+    const frows = await ctx.db
+      .query("battleFunnel")
+      .withIndex("by_ts", (q) => q.gte("zoneStartT", since))
+      .collect();
+    const entered = frows.length;
+    const c1 = frows.filter((r) => r.c1Ts != null).length;
+    const c2 = frows.filter((r) => r.c2Ts != null).length;
+    const confirmed = frows.filter((r) => r.confirmedTs != null).length;
+    const invalid = frows.filter((r) => r.invalidTs != null).length;
+    const rate = (a: number, b: number) => (b > 0 ? a / b : 0);
+    const funnel = {
+      entered,
+      c1,
+      c2,
+      confirmed,
+      invalid,
+      rateEnteredToC1: rate(c1, entered),
+      rateC1ToC2: rate(c2, c1),
+      rateC2ToConfirmed: rate(confirmed, c2),
+      rateOverall: rate(confirmed, entered),
+    };
 
-    lines.push("");
-    lines.push("<b>结论</b>");
-    lines.push(best ? `最优：${best.dim}=${best.lab}（n=${best.m.n} 胜率 ${pctOf(best.m)} 期望 ${sgn(best.m.expR)}R）` : "最优：样本不足（各维度 n<3）");
-    lines.push(worst ? `最差：${worst.dim}=${worst.lab}（n=${worst.m.n} 胜率 ${pctOf(worst.m)} 期望 ${sgn(worst.m.expR)}R）` : "最差：样本不足");
-    lines.push(worst ? `建议：${worst.dim}=${worst.lab} 期望为负，考虑收紧条件或暂停该组合。` : "建议：已归因维度期望均为正，维持当前规则。");
-    if (m.n < 10) lines.push(`注：本周 ${m.n} 笔了结，样本偏小，结论仅供参考。`);
+    // 权益曲线（窗口内）。
+    let acc = 0;
+    const equity = closed.map((t) => {
+      acc += t.pnlUsd;
+      return { ts: t.closedTs, usd: acc, pct: (acc / PRINCIPAL) * 100 };
+    });
 
-    await sendTelegram(lines.join("\n"));
-    return { sent: true };
+    // 逐笔明细（倒序，最近在前）。
+    const trades = [...closed].reverse().map((t) => ({
+      symbol: t.symbol,
+      dir: t.dir,
+      entry: t.entry,
+      stop: t.stop,
+      exit: t.exit,
+      notional: t.notional,
+      leverage: t.leverage,
+      margin: t.margin,
+      fee: t.fee,
+      riskUsd: t.riskUsd,
+      riskPct: t.riskPct,
+      pnlUsd: t.pnlUsd,
+      rNet: t.rNet,
+      openedTs: t.openedTs,
+      closedTs: t.closedTs,
+      confirm: t.confirm,
+      zoneKind: t.zoneKind,
+    }));
+
+    return {
+      range: { since, until: now, days: win },
+      account: {
+        principal: PRINCIPAL,
+        notional: NOTIONAL,
+        leverage: LEVERAGE,
+        margin: MARGIN,
+        feePerTrade: FEE_PER_TRADE,
+      },
+      funnel,
+      metrics: {
+        opened: openedN,
+        n,
+        wins,
+        losses,
+        winRate: n > 0 ? wins / n : 0,
+        expR,
+        sumR,
+        sumUsd,
+        sumPct,
+      },
+      rBuckets,
+      attribution,
+      drawdown: { week: dd(closed), month: dd(all) },
+      equity,
+      trades,
+    };
   },
 });

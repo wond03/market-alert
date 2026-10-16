@@ -61,4 +61,20 @@ export default defineSchema({
     exitPrice: v.number(), // 了结价（扫止损/到止盈用该价位；取消用当时收盘）
     createdAt: v.number(),
 }).index("by_closedTs", ["closedTs"]),
+
+ // 作战面板：区域分层漏斗（记录每个区域在各层级是否通过，用于信号质量通过率）
+ battleFunnel: defineTable({
+   key: v.string(), // 交易所:标的
+   exchange: v.string(),
+   symbol: v.string(),
+   zoneKey: v.string(), // 区域指纹
+   fp: v.string(), // key + | + zoneKey，去重指纹
+   zoneStartT: v.number(), // 入区所在 5m K 开盘时间
+   enteredTs: v.number(), // 入区时间
+   c1Ts: v.optional(v.union(v.number(), v.null())), // 确认1 达成时间
+   c2Ts: v.optional(v.union(v.number(), v.null())), // 确认2 达成时间
+   confirmedTs: v.optional(v.union(v.number(), v.null())), // 入场（信号）时间
+   invalidTs: v.optional(v.union(v.number(), v.null())), // 失效时间
+   updatedAt: v.number(),
+ }).index("by_fp", ["fp"]).index("by_ts", ["zoneStartT"]),
 });

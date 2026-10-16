@@ -407,12 +407,22 @@ export function buildMessage(
   );
 }
 
+// 区域分层漏斗：本次扫描时活动区域推进到的层级（用于信号质量通过率）。
+export type FunnelInfo = {
+  zoneKey: string;
+  zoneStartT: number;
+  c1T: number | null;
+  c2T: number | null;
+  confirmed: boolean;
+};
+
 export type BattleEval = {
   bias: string; // bull|bear|range
   firedZone: string;
   zoneKey: string;
   zoneStartT: number | null;
   signal: BattleSignal | null;
+  funnel?: FunnelInfo | null;
 };
 
 // 给定已收盘的 HTF/MTF/LTF K 线（升序、末尾为最近已收盘 K）与上次持久化状态，返回本次扫描结果。
@@ -465,6 +475,7 @@ export function evaluateBattle(
   let zoneKey = prev.zoneKey;
   let zoneStartT = prev.zoneStartT;
   let firedZone = prev.firedZone;
+  let funnel: FunnelInfo | null = null;
 
   // 方向变化：跟踪的区域作废，清窗口（去重指纹保留，由失效判据决定是否重置）。
   if (zoneKey && zoneKey.split("#")[0] !== bias) {
@@ -492,9 +503,10 @@ export function evaluateBattle(
         if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
       }
     }
-    if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null };
-    zoneKey = zoneToKey(inZone);
-    zoneStartT = last.t;
+  if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+  zoneKey = zoneToKey(inZone);
+  zoneStartT = last.t;
+  funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
   }
 
   const z = parseZoneKey(zoneKey)!;
@@ -504,23 +516,28 @@ export function evaluateBattle(
   const c1 = confirm1Indices(mtf, ltf, bias, startT, lastCloseT);
   const c2 = confirm2Indices(ltf, bias, startT, lastCloseT);
   const pair = closestPair(c1, c2, opts.confirmSpanMax ?? CONFIRM_SPAN_MAX);
-  if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null };
+  const c1T = c1.length ? ltf[c1[0].i]?.t ?? null : null;
+  const c2T = c2.length ? ltf[c2[0].i]?.t ?? null : null;
+  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: false };
+  if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   // 当天去重：同一区域只推一次。
-  if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null };
+  if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : z.top;
   const bgOk = bg === "bull" || bg === "bear";
   const bgTag = bgOk && htfLast ? htfLast.tag : "";
-  const bgLevel = bgOk && htfLast ? htfLast.level : 0;
-  return {
-    bias,
-    firedZone: zoneKey,
-    zoneKey,
-    zoneStartT,
-    signal: {
+ const bgLevel = bgOk && htfLast ? htfLast.level : 0;
+ funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: true };
+ return {
+ bias,
+ firedZone: zoneKey,
+ zoneKey,
+ zoneStartT,
+ funnel,
+ signal: {
       bias: bias === "bull" ? "long" : "short",
       bg,
       htfTag: dirTag,

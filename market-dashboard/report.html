@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title translate="no">猎场 Vantage · 报表</title>
+<style>
+:root{
+  --bg:#0e1117; --panel:#161b22; --border:#232a33; --text:#c9d1d9; --muted:#8b949e;
+  --up:#26a69a; --down:#ef5350; --accent:#4c8bf5;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:12px 18px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5;flex-wrap:wrap}
+h1{font-size:15px;margin:0;font-weight:600}
+.spacer{flex:1}
+.btn{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--accent)}
+.btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+main{padding:18px;max-width:1200px;margin:0 auto}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.two{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px}
+.card h2{font-size:12px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spacing:.04em}
+.kv{display:flex;justify-content:space-between;padding:3px 0}
+.kv .k{color:var(--muted)}
+.big{font-size:24px;font-weight:600}
+.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+.bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.funnel-step{display:flex;align-items:center;gap:10px;padding:6px 0}
+.funnel-step .lbl{width:110px;color:var(--muted)}
+.funnel-step .val{width:70px;text-align:right;font-variant-numeric:tabular-nums}
+.funnel-step .bar{flex:1}
+.err{color:var(--down);padding:20px}
+.scroll{overflow:auto;max-height:520px}
+</style>
+</head>
+<body>
+<header>
+  <h1>猎场 Vantage · 报表</h1>
+  <span class="muted" id="range"></span>
+  <span class="spacer"></span>
+  <button class="btn" data-days="7">近 7 天</button>
+  <button class="btn" data-days="30">近 30 天</button>
+  <button class="btn" id="reload">刷新</button>
+</header>
+<main id="app"><div class="muted" style="padding:24px">加载中…</div></main>
+
+<script>
+var CONVEX_URL = "https://efficient-cod-911.convex.cloud";
+var WIN = 7;
+
+function convexError(res){
+  if(res && res.errorData!=null){ if(typeof res.errorData==="string") return res.errorData; try{return JSON.stringify(res.errorData);}catch(e){} }
+  var s=String((res&&res.errorMessage)||"");
+  var m=s.match(/ConvexError:\s*([^\n]+)/)||s.match(/Uncaught Error:\s*([^\n]+)/);
+  if(m) return m[1].trim();
+  var lines=s.split("\n").map(function(t){return t.trim();}).filter(Boolean);
+  for(var i=0;i<lines.length;i++){ if(lines[i].indexOf("Server Error")===-1&&lines[i].indexOf("Request ID")===-1&&lines[i].indexOf("at ")!==0) return lines[i]; }
+  return lines[0]||"请求失败";
+}
+function convexQuery(path,args){
+  return fetch(CONVEX_URL+"/api/query",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({path:path,args:args||{},format:"json"})})
+    .then(function(r){return r.json();})
+    .then(function(res){ if(!res||res.status!=="success") throw new Error(convexError(res)); return res.value; });
+}
+
+function el(tag,cls,html){var e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;}
+function num(x,d){d=d==null?2:d;return (x==null||isNaN(x))?"-":Number(x).toFixed(d);}
+function signed(x,d){d=d==null?2:d;if(x==null||isNaN(x))return "-";return (x>=0?"+":"")+Number(x).toFixed(d);}
+function pct(x,d){d=d==null?1:d;if(x==null||isNaN(x))return "-";return (x*100).toFixed(d)+"%";}
+function cls(x){return x>0?"up":(x<0?"down":"muted");}
+function fmtTs(ts){var dt=new Date(ts*1000);return dt.toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});}
+
+function card(title,body){var c=el("div","card");c.appendChild(el("h2",null,title));c.appendChild(body);return c;}
+function kvRow(k,v,klass){var row=el("div","kv");row.appendChild(el("span","k",k));row.appendChild(el("span",klass||"",v));return row;}
+
+function equityChart(equity){
+  var w=560,h=180,pad=24;
+  if(!equity.length) return el("div","muted","暂无权益曲线");
+  var ys=equity.map(function(p){return p.pct;});
+  var min=Math.min(0,Math.min.apply(null,ys)), max=Math.max(0,Math.max.apply(null,ys));
+  if(max-min<1e-6){max=min+1;}
+  var n=equity.length;
+  var X=function(i){return n===1?w/2:pad+(w-2*pad)*(i/(n-1));};
+  var Y=function(v){return h-pad-(h-2*pad)*((v-min)/(max-min));};
+  var pts=equity.map(function(p,i){return X(i).toFixed(1)+","+Y(p.pct).toFixed(1);}).join(" ");
+  var zero=Y(0);
+  var svg='<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none">';
+  svg+='<line x1="'+pad+'" y1="'+zero.toFixed(1)+'" x2="'+(w-pad)+'" y2="'+zero.toFixed(1)+'" stroke="#232a33" stroke-dasharray="4 4"/>';
+  var col=equity[n-1].pct>=0?"#26a69a":"#ef5350";
+  svg+='<polyline fill="none" stroke="'+col+'" stroke-width="2" points="'+pts+'"/>';
+  svg+='</svg>';
+  return el("div",null,svg);
+}
+
+function render(d){
+  var app=document.getElementById("app"); app.innerHTML="";
+  document.getElementById("range").textContent="区间 "+fmtTs(d.range.since)+" ~ "+fmtTs(d.range.until)+"（"+d.range.days+" 天）";
+
+  var m=d.metrics, a=d.account, f=d.funnel, ddw=d.drawdown.week, ddm=d.drawdown.month;
+
+  var cards=el("div","grid cards");
+  cards.appendChild(card("账户", (function(){var b=el("div");b.appendChild(el("div","big",num(a.principal,0)+" U"));
+    b.appendChild(kvRow("名义/笔",num(a.notional,0)+" U"));b.appendChild(kvRow("杠杆",num(a.leverage,0)+"x"));
+    b.appendChild(kvRow("保证金/笔",num(a.margin,0)+" U"));b.appendChild(kvRow("手续费/笔",num(a.feePerTrade,2)+" U"));return b;})()));
+  cards.appendChild(card("总览", (function(){var b=el("div");b.appendChild(el("div","big "+cls(m.sumUsd),signed(m.sumUsd,2)+" U"));
+    b.appendChild(kvRow("开/平",m.opened+" / "+m.n));b.appendChild(kvRow("胜率",pct(m.winRate)));
+    b.appendChild(kvRow("期望",signed(m.expR,2)+" R",cls(m.expR)));b.appendChild(kvRow("累计",signed(m.sumR,2)+" R / "+signed(m.sumPct,1)+"%",cls(m.sumR)));return b;})()));
+  cards.appendChild(card("周回撤（7d）", (function(){var b=el("div");b.appendChild(el("div","big down","-"+num(ddw.mddUsd,2)+" U"));
+    b.appendChild(kvRow("占本金","-"+num(ddw.mddPct,1)+"%"));b.appendChild(kvRow("R","-"+num(ddw.mddR,2)));return b;})()));
+  cards.appendChild(card("月回撤（30d）", (function(){var b=el("div");b.appendChild(el("div","big down","-"+num(ddm.mddUsd,2)+" U"));
+    b.appendChild(kvRow("占本金","-"+num(ddm.mddPct,1)+"%"));b.appendChild(kvRow("R","-"+num(ddm.mddR,2)));return b;})()));
+  app.appendChild(cards);
+
+  var two=el("div","grid two"); two.style.marginTop="14px";
+
+  var fb=el("div");
+  var steps=[["入区",f.entered,f.entered],["确认1",f.c1,f.rateEnteredToC1],["确认2",f.c2,f.rateC1ToC2],["入场",f.confirmed,f.rateC2ToConfirmed]];
+  var base=Math.max(1,f.entered);
+  steps.forEach(function(s){
+    var row=el("div","funnel-step");
+    row.appendChild(el("span","lbl",s[0]));
+    row.appendChild(el("span","val",s[1]));
+    var bar=el("div","bar");var i=el("i");i.style.width=(100*s[1]/base)+"%";bar.appendChild(i);
+    row.appendChild(bar);
+    row.appendChild(el("span","val",pct(s[2])));
+    fb.appendChild(row);
+  });
+  fb.appendChild(kvRow("整体通过率",pct(f.rateOverall)));
+  fb.appendChild(kvRow("失效",String(f.invalid)));
+  two.appendChild(card("信号质量 · 分层通过率",fb));
+
+  var rb=el("div");
+  var rmax=Math.max.apply(null,d.rBuckets.map(function(b){return b.count;}).concat([1]));
+  d.rBuckets.forEach(function(b){
+    var row=el("div","funnel-step");
+    row.appendChild(el("span","lbl",b.label));
+    row.appendChild(el("span","val",b.count));
+    var bar=el("div","bar");var i=el("i");i.style.width=(100*b.count/rmax)+"%";bar.appendChild(i);
+    row.appendChild(bar); row.appendChild(el("span","val",""));
+    rb.appendChild(row);
+  });
+  two.appendChild(card("R 倍数分布（净 R）",rb));
+  app.appendChild(two);
+
+  var two2=el("div","grid two"); two2.style.marginTop="14px";
+  var ab=el("div");
+  var tbl=el("table");
+  tbl.innerHTML="<thead><tr><th>维度</th><th>分组</th><th>n</th><th>期望 R</th><th>累计 R</th></tr></thead>";
+  var tb=el("tbody");
+  d.attribution.forEach(function(x){
+    var tr=el("tr");
+    tr.innerHTML="<td>"+x.dim+"</td><td>"+x.label+"</td><td>"+x.n+"</td><td class='"+cls(x.expR)+"'>"+signed(x.expR,2)+"</td><td class='"+cls(x.sumR)+"'>"+signed(x.sumR,2)+"</td>";
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); ab.appendChild(tbl);
+  two2.appendChild(card("归因",ab));
+
+  var eb=el("div"); eb.appendChild(equityChart(d.equity)); eb.appendChild(kvRow("已了结",String(m.n)));
+  eb.appendChild(kvRow("累计收益",signed(m.sumPct,1)+"%",cls(m.sumUsd)));
+  two2.appendChild(card("账户权益曲线（本金为基）",eb));
+  app.appendChild(two2);
+
+  var tr=el("div","card"); tr.style.marginTop="14px"; tr.appendChild(el("h2",null,"逐笔明细"));
+  var sc=el("div","scroll"); var t2=el("table");
+  t2.innerHTML="<thead><tr><th>时间</th><th>标的</th><th>方向</th><th>入场</th><th>止损</th><th>出场</th><th>区域</th><th>触发</th><th>名义</th><th>杠杆</th><th>保证金</th><th>手续费</th><th>风险%</th><th>净R</th><th>PnL U</th></tr></thead>";
+  var tb2=el("tbody");
+  d.trades.forEach(function(t){
+    var row=el("tr");
+    row.innerHTML="<td>"+fmtTs(t.closedTs)+"</td><td>"+t.symbol+"</td><td>"+(t.dir>0?"多":"空")+"</td><td>"+num(t.entry,2)+"</td><td>"+num(t.stop,2)+"</td><td>"+num(t.exit,2)+"</td><td>"+t.zoneKind+"</td><td>"+t.confirm+"</td><td>"+num(t.notional,0)+"</td><td>"+num(t.leverage,0)+"x</td><td>"+num(t.margin,0)+"</td><td>"+num(t.fee,2)+"</td><td>"+num(t.riskPct*100,2)+"%</td><td class='"+cls(t.rNet)+"'>"+signed(t.rNet,2)+"</td><td class='"+cls(t.pnlUsd)+"'>"+signed(t.pnlUsd,2)+"</td>";
+    tb2.appendChild(row);
+  });
+  t2.appendChild(tb2); sc.appendChild(t2); tr.appendChild(sc);
+  app.appendChild(tr);
+}
+
+function load(){
+  document.getElementById("app").innerHTML='<div class="muted" style="padding:24px">加载中…</div>';
+  convexQuery("report:pageData",{days:WIN}).then(render).catch(function(e){
+    document.getElementById("app").innerHTML='<div class="err">加载失败：'+String(e.message||e)+'</div>';
+  });
+}
+
+Array.prototype.forEach.call(document.querySelectorAll("[data-days]"),function(b){
+  b.addEventListener("click",function(){ WIN=Number(b.getAttribute("data-days")); syncBtns(); load(); });
+});
+document.getElementById("reload").addEventListener("click",load);
+function syncBtns(){ Array.prototype.forEach.call(document.querySelectorAll("[data-days]"),function(b){
+  b.classList.toggle("active", Number(b.getAttribute("data-days"))===WIN); }); }
+syncBtns();
+load();
+</script>
+</body>
+</html>
