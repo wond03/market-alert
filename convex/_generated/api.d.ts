@@ -19,8 +19,6 @@ import type * as market from "../market.js";
 import type * as paper from "../paper.js";
 import type * as report from "../report.js";
 import type * as rulesAdmin from "../rulesAdmin.js";
-import type * as smc from "../smc.js";
-import type * as smcCore from "../smcCore.js";
 
 import type {
   ApiFromModules,
@@ -40,8 +38,6 @@ declare const fullApi: ApiFromModules<{
   paper: typeof paper;
   report: typeof report;
   rulesAdmin: typeof rulesAdmin;
-  smc: typeof smc;
-  smcCore: typeof smcCore;
 }>;
 
 /**

@@ -52,13 +52,7 @@ export default defineSchema({
     text: v.string(),
   }).index("by_ts", ["ts"]),
 
-  // SMC 记录器：每个 (交易所:标的) 已处理到的最新 15m K 线时间
-  smcState: defineTable({
-    key: v.string(),
-    checked: v.number(),
-  }).index("by_key", ["key"]),
-
-  // 作战面板：每个 (交易所:标的) 的布防状态（记录已推送过的区域，离开后重进再推）
+ // 作战面板：每个 (交易所:标的) 的布防状态（记录已推送过的区域，离开后重进再推）
   battleState: defineTable({
     key: v.string(),
     firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
@@ -115,47 +109,5 @@ export default defineSchema({
     result: v.string(), // stop | target | cancel
     exitPrice: v.number(), // 了结价（扫止损/到止盈用该价位；取消用当时收盘）
     createdAt: v.number(),
-  }).index("by_closedTs", ["closedTs"]),
-
-  // SMC 记录器：LuxAlgo 结构突破（BOS/CHoCH）候选信号与假设成交（只记录，不推送/不交易）
-  smcSignals: defineTable({    exchange: v.string(),
-    symbol: v.string(),
-    sigTs: v.number(),
-    session: v.string(), // 亚洲盘 | 伦敦盘 | 纽约盘（仅记录三大时段内的信号）
-    level: v.number(), // 被突破的摆动点价位
-    levelKind: v.string(), // structural
-    tag: v.optional(v.string()), // BOS | CHoCH
-    sweepSide: v.string(), // bull | bear（突破方向）
-    bias: v.string(), // break | retest
-    tradeDir: v.string(), // long | short
-    entryPrice: v.number(),
-    pen: v.number(), // 刺破幅度
-    rangeHigh: v.optional(v.number()),
-    rangeLow: v.optional(v.number()),
-    posPct: v.optional(v.number()), // 在 dealing range 中的位置 0..1
-    zone: v.string(), // premium | discount | mid
-    trend1h: v.string(), // bull | bear | range
-    trend15: v.string(),
-    align1h: v.boolean(), // 该方向是否与 1h 结构同向
-    align15: v.boolean(),
-    fvgAbove: v.optional(v.number()), // 最近未填补 FVG 距现价（比例）
-    fvgBelow: v.optional(v.number()),
-    fvgAboveDir: v.optional(v.string()),
-    fvgBelowDir: v.optional(v.string()),
-    sl: v.number(),
-    tp: v.number(),
-    holdH: v.number(),
-    status: v.string(), // open | closed
-    exitTs: v.optional(v.number()),
-    exitPrice: v.optional(v.number()),
-    reason: v.optional(v.string()), // stop | target | timeout
-    gross: v.optional(v.number()),
-    net: v.optional(v.number()),
-    mfe: v.optional(v.number()), // 最大有利波动
-    mae: v.optional(v.number()), // 最大不利波动
-    openedAt: v.number(),
-    closedAt: v.optional(v.number()),
-  })
-    .index("by_status", ["status"])
-    .index("by_sigTs", ["sigTs"]),
+}).index("by_closedTs", ["closedTs"]),
 });

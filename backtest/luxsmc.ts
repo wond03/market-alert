@@ -13,7 +13,80 @@ import { type Candle, currentSessionName } from "../convex/gate";
 import { contractOf } from "../convex/exchanges";
 import { fetchHistory } from "./history";
 import { SWING_LEN, runStructure, type OrderBlock, type StructBreak } from "../convex/luxSmc";
-import { manage } from "../convex/smcCore";
+
+// 出场口径（内联自旧 smcCore.manage）：固定 SL/TP + 8h 兜底 + 成本/资金费；信号 K 线只判止损。
+const MAKER_BPS = 2;
+const TAKER_BPS = 5;
+const SLIP_BPS = 2;
+const TARGET_COST = (MAKER_BPS + MAKER_BPS) / 10000;
+const STOP_COST = (MAKER_BPS + TAKER_BPS + SLIP_BPS) / 10000;
+const FUNDING_8H: Record<string, number> = { BTC: 0.000027, XAU: 0.000043 };
+
+type ManagedResult = {
+  exitTs: number;
+  exitPrice: number;
+  reason: string;
+  gross: number;
+  net: number;
+  mfe: number;
+  mae: number;
+} | null;
+
+function manage(
+  candles: Candle[],
+  t: {
+    tradeDir: string;
+    entryPrice: number;
+    sl: number;
+    tp: number;
+    sigTs: number;
+    holdH: number;
+    symbol: string;
+  },
+  now: number,
+): ManagedResult {
+  const short = t.tradeDir === "short";
+  const entry = t.entryPrice;
+  const stop = short ? entry * (1 + t.sl) : entry * (1 - t.sl);
+  const tgt = short ? entry * (1 - t.tp) : entry * (1 + t.tp);
+  const endT = t.sigTs + t.holdH * 3600;
+  const dir = short ? -1 : 1;
+  const cost = (reason: string) => (reason === "target" ? TARGET_COST : STOP_COST);
+  const fin = (
+    reason: string,
+    exitTs: number,
+    exitPrice: number,
+    gross: number,
+    mfe: number,
+    mae: number,
+  ) => {
+    const funding = (FUNDING_8H[t.symbol] ?? 0) * dir * (t.holdH / 8);
+    return { exitTs, exitPrice, reason, gross, net: gross - cost(reason) - funding, mfe, mae };
+  };
+  let mfe = 0;
+  let mae = 0;
+  let last: Candle | null = null;
+  for (const c of candles) {
+    if (c.t < t.sigTs) continue;
+    if (c.t > endT) break;
+    const hitStop = short ? c.h >= stop : c.l <= stop;
+    if (c.t === t.sigTs) {
+      if (hitStop) return fin("stop", c.t, stop, -t.sl, mfe, mae);
+      continue;
+    }
+    last = c;
+    mfe = Math.max(mfe, short ? (entry - c.l) / entry : (c.h - entry) / entry);
+    mae = Math.max(mae, short ? (c.h - entry) / entry : (entry - c.l) / entry);
+    const hitTgt = short ? c.l <= tgt : c.h >= tgt;
+    if (hitStop) return fin("stop", c.t, stop, -t.sl, mfe, mae);
+    if (hitTgt) return fin("target", c.t, tgt, t.tp, mfe, mae);
+  }
+  if (last && now >= endT) {
+    const raw = short ? (entry - last.c) / entry : (last.c - entry) / entry;
+    return fin("timeout", last.t, last.c, raw, mfe, mae);
+  }
+  return null;
+}
 
 const LOOKBACK_POINTS = 9600; // 约 100 天
 const SYMBOLS = ["BTC", "XAU"];
