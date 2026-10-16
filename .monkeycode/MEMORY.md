@@ -102,6 +102,6 @@
 
 [User Instruction Summary]
 - Date: 2026-10-17
-- Context: 用户要求「每个产品和项目都需要有说明文档」
+- Context: 用户要求「每个产品和项目都需要有简介」（此前误记为「说明文档」）
 - Instructions:
-- 每个产品/项目都需维护说明文档；本项目说明文档位于 `.monkeycode/docs/`（`INDEX.md`、`ARCHITECTURE.md`、`INTERFACES.md`、`DEVELOPER_GUIDE.md`，以及 `专有概念/`、`模块/` 子目录），代码改动后同步更新。
+- 每个产品/项目都需维护一份**简介**（不是成套说明文档）；本项目简介为仓库根 `README.md`（一页以内），代码改动后同步更新。业务细节另见 `docs/business-logic/README.md`。
