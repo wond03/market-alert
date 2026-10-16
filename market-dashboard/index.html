@@ -108,11 +108,11 @@
   .params input[type="text"] { width: 160px; }
   .param-group { width: 100%; font-size: 12px; font-weight: 700; color: var(--text); margin: 10px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
   .param-box { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 0; }
-  /* 作战面板辅助 */
+  /* 猎场信号面板辅助 */
   .bt-note { margin-top: 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
   .bt-bad { color: #ff6b6b; }
 
-  /* SMC 作战面板 */
+  /* SMC 猎场信号面板 */
   .modal.battle { width: 660px; }
   .bt-form { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .bt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
@@ -158,7 +158,7 @@
     <div class="group" id="tfGroup"></div>
     <select id="tfSelect" class="tf-select"></select>
     <button class="btn-settings" id="btnSettings">指标设置</button>
-    <button class="btn-settings" id="btnBattle">作战面板</button>
+    <button class="btn-settings" id="btnBattle">猎场信号面板</button>
     <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">连接中…</span></div>
   </div>
 </header>
@@ -181,7 +181,7 @@
 <div class="mask" id="battleMask">
   <div class="modal battle">
     <div class="modal-head">
-      <span>SMC 作战面板</span>
+      <span>SMC 猎场信号面板</span>
       <div class="actions">
         <button id="btRefresh">刷新</button>
         <button class="primary" id="btClose">完成</button>
@@ -1463,7 +1463,7 @@ function ensureSmcData(entry) {
   }
   function convexQuery(path, args) { return convexPost("query", path, args); }
 function convexAction(path, args) { return convexPost("action", path, args); }
-  /* ================= SMC 作战面板 =================
+  /* ================= SMC 猎场信号面板 =================
      脚本：BOS/CHoCH 定方向 → OB/FVG 找入区 → 价格进入入区且出现低周期同向确认才提示 → 区域外止损 → 前高前低/流动性止盈。
      跨周期取数（方向 / 区域 / 入场），结构与入区判定全部由后端 panel:battleStatus 计算（单一事实来源）。 */
   function btTrigState(st, mtfIv, ltfIv) {

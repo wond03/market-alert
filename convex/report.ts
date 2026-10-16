@@ -1,7 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 
-// 作战面板报表：只读聚合，供 report.html 展示。
+// 猎场信号面板报表：只读聚合，供 report.html 展示。
 // 账户口径：本金 100U、名义 500U、杠杆 100x、每笔保证金 5U、双边 taker 0.05%，不加滞点。
 // 指标统一用「扣费后净 R」。
 // 周期：自然周（周日 05:00 北京起）与自然月（每月 1 号 00:00 北京起）。

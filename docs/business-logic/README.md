@@ -12,7 +12,7 @@ mindmap
       Gate 合约 REST 与 WSS
       品种 BTC XAU
     后端 Convex
-      线B 作战面板 battle
+      猎场信号面板 battle
         1h 背景偏置
         15m 日内方向
         OB FVG 入区
@@ -33,7 +33,7 @@ mindmap
       多窗格 K 线
       SMC 叠加
       指标注册表 交易时段
-      作战面板弹窗
+      猎场信号面板弹窗
       Convex 一次性查询
       GitHub Pages 托管
     研究层 backtest
@@ -50,9 +50,9 @@ mindmap
 
 | 层 | 模块 | 关键内容 | 说明 | 代码位置 |
 |---|---|---|---|---|
-| 数据源 | Gate | REST 历史 + WSS 实时（主用） | 作战面板只用 gate | `convex/exchanges.ts:21` |
+| 数据源 | Gate | REST 历史 + WSS 实时（主用） | 猎场信号面板只用 gate | `convex/exchanges.ts:21` |
 | 数据源 | 品种 | BTC、XAU | 只做这两个 | `convex/exchanges.ts:16` |
-| 后端 | 线B 作战面板 battle | 唯一入场信号 | 见下表 2 | `convex/battle.ts` |
+| 后端 | 猎场信号面板 battle | 唯一入场信号 | 见下表 2 | `convex/battle.ts` |
 | 后端 | 线C 周报 | battle 近 7 天体检 | 周一推送 | `convex/report.ts` |
 | 后端 | 纯逻辑库 | luxSmc / battleCore | 无 Convex 依赖，回测共用 | `convex/luxSmc.ts`、`convex/battleCore.ts` |
 | 后端 | 看盘只读接口 | panel:analyze / panel:battleStatus | 看盘页唯一计算入口 | `convex/panel.ts` |
@@ -60,7 +60,7 @@ mindmap
 | 研究层 | backtest | 策略验证 | 不产线，见下表 6 | `backtest/*.ts` |
 | 调度 | crons + env | 2 个定时任务 + 开关 | 见下表 4 | `convex/crons.ts` |
 
-## 2. 线B 作战面板 battle（入场信号）
+## 2. 猎场信号面板 battle（入场信号）
 
 | 步骤 | 内容 | 常量 | 代码位置 |
 |---|---|---|---|
@@ -91,10 +91,10 @@ mindmap
 | 类型 | 名称 | 用途 |
 |---|---|---|
 | 表 | `battleSignals` / `battleOutcomes` / `battleState` | 信号 / 了结 / 布防 |
-| cron | `battle signal`（1m） | 作战面板扫描 |
+| cron | `battle signal`（1m） | 猎场信号面板扫描 |
 | cron | `signal weekly report`（周一） | 周报 |
 | env | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` | 推送 |
-| env | `BATTLE`（prod=1） | 作战面板开关 |
+| env | `BATTLE`（prod=1） | 猎场信号面板开关 |
 
 ## 5. 前端看盘页
 
@@ -103,7 +103,7 @@ mindmap
 | 图表 | 多窗格 K 线（lightweight-charts），交易所 REST 历史 + WSS 实时 |
 | 叠加 | BOS/CHoCH、OB、FVG、扫单、时段框（数据来自 `panel:analyze`） |
 | 指标 | 指标注册表 `IND`，当前仅“交易时段” |
-| 弹窗 | SMC 作战面板（日内方向、最近信号、最近了结、检查清单；读数来自 `panel:battleStatus`） |
+| 弹窗 | SMC 猎场信号面板（日内方向、最近信号、最近了结、检查清单；读数来自 `panel:battleStatus`） |
 | 数据 | 一次性 HTTP POST，硬编码 prod Convex URL（非订阅/非轮询） |
 | 托管 | GitHub Pages，push `master` 且改 `market-dashboard/**` 触发 |
 
@@ -111,12 +111,12 @@ mindmap
 
 | 脚本 | 用途 |
 |---|---|
-| `backtest/battle.ts` | 用生产同口径 `evaluateBattle` 复算作战面板 |
+| `backtest/battle.ts` | 用生产同口径 `evaluateBattle` 复算猎场信号面板 |
 | `backtest/history.ts` | 共享：Gate 历史分页 + 缓存 |
 
 原研究层脚本（`luxsmc`/`run`/`smc_seq`/`smc_tf`/`session_sweep`/`positioning`）与生产策略无关，已于 2026-10-16 移除。
 
-## 7. 作战面板回测验收（2026-10-16）
+## 7. 猎场信号面板回测验收（2026-10-16）
 
 工具 `backtest/battle.ts`（复用生产 `evaluateBattle`；MTF 15m / LTF 5m；前瞻 24h；net 已扣 10bps 往返）。
 样本 Gate `BTC`/`XAU` 5m 近 ~31 天（09-14 → 10-15）。生产口径 = 窗口 24 根 15m、span 6。

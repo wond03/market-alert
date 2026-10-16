@@ -1,4 +1,4 @@
-// 回测：作战面板（battle）信号 —— 统一确认窗口版本。
+// 回测：猎场信号面板（battle）信号 —— 统一确认窗口版本。
 // 复用生产同一套纯逻辑 evaluateBattle（backtest 通过 opts 覆盖 ZONE_WINDOW_SEC / CONFIRM_SPAN_MAX），
 // 逐根 5m 收盘推进窗口状态，再按固定风控做前瞻模拟，横向对比不同窗口/间隔参数。
 //

@@ -1,4 +1,4 @@
-// 交易时段 / 时间与价格格式化工具（供作战面板 battleCore、panel 使用）。
+// 交易时段 / 时间与价格格式化工具（供猎场信号面板 battleCore、panel 使用）。
 // 交易所 K 线抓取见 exchanges.ts。
 
 export const BJ_OFFSET = 8 * 3600; // 北京时间相对 UTC 的偏移（秒）

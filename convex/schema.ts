@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 export default defineSchema({
 
- // 作战面板：每个 (交易所:标的) 的布防状态（记录已推送过的区域，离开后重进再推）
+ // 猎场信号面板：每个 (交易所:标的) 的布防状态（记录已推送过的区域，离开后重进再推）
   battleState: defineTable({
     key: v.string(),
     firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
@@ -18,7 +18,7 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
-  // 作战面板：低周期确认入场的信号（记录 + 推送）
+  // 猎场信号面板：低周期确认入场的信号（记录 + 推送）
   battleSignals: defineTable({
     exchange: v.string(),
     symbol: v.string(),
@@ -46,7 +46,7 @@ export default defineSchema({
     closedTs: v.optional(v.union(v.number(), v.null())), // 了结时间
   }).index("by_sigTs", ["sigTs"]),
 
-  // 作战面板：信号了结记录（扫止损 / 到止盈 / 离场取消），用于复盘每笔的止盈止损结果
+  // 猎场信号面板：信号了结记录（扫止损 / 到止盈 / 离场取消），用于复盘每笔的止盈止损结果
   battleOutcomes: defineTable({
     exchange: v.string(),
     symbol: v.string(),
@@ -62,7 +62,7 @@ export default defineSchema({
     createdAt: v.number(),
 }).index("by_closedTs", ["closedTs"]),
 
- // 作战面板：区域分层漏斗（记录每个区域在各层级是否通过，用于信号质量通过率）
+ // 猎场信号面板：区域分层漏斗（记录每个区域在各层级是否通过，用于信号质量通过率）
  battleFunnel: defineTable({
    key: v.string(), // 交易所:标的
    exchange: v.string(),
