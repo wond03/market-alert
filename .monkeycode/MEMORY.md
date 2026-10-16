@@ -87,7 +87,7 @@
 - Context: Discovered by Agent while backtesting the rule and SMC strategies
 - Category: Testing Methods
 - Instructions:
-  - 回测在 `backtest/`：`run.ts`（规则信号）、`smc.ts`（SMC 扫荡）、`battle.ts`（作战面板：对比确认 1 的 15m 内部结构回看 3/4/5，`evaluateBattle` 的 `opts.internalConfirmLookback` 可覆盖）、`funnel.ts`（闸门漏斗诊断：各级过滤存活数 + 放宽敏感性）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
+  - 回测在 `backtest/`：`run.ts`（规则信号）、`smc.ts`（SMC 扫荡）、`battle.ts`（作战面板：对比确认 1 的 15m 内部结构回看 3/4/5，`evaluateBattle` 的 `opts.internalConfirmLookback` 可覆盖）、`funnel.ts`（闸门漏斗诊断：各级过滤存活数 + 放宽敏感性）、`shadow.ts`（分层通过率：方向/入区/确认1/确认2/RR，含生产逐根口径与事件序列口径）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
   - Gate candlesticks 限制：单次 ≤2000 根，`limit` 不能与 `from`/`to` 同用，只能取最近 10000 点 → 15m≈104 天、5m≈35 天、1m≈7 天（回测用 15m）。
   - 结论（重要）：①影线逆势规则修正「同根 K 线止损」乐观偏差后，单笔净期望约 +0.05%（成本量级），70/30 样本外略负（-0.05%）→ 无优势。②SMC 扫荡式表述毛收益≈0（reversal -0.03% t=-2.39、continuation 0.00%，平均 MFE 0.39% ≈ MAE 0.38%），所有切分（时段/1h 对齐/溢折价/参考位/分品种/前后半段）无一为正 → 无方向边际，调 SL/TP 无用。③任何单桶/单折的高 t 值不可信（过拟合）；只有「1h 趋势同向过滤」方向一致但 t≈0.5，仍不显著。**均不可实盘。**
   - 资金费：Gate `funding_rate` 仅约 30 天；BTC ~0.0027%/8h、XAU ~0.0043%，量级可忽略（回测已按方向/时长并入成本）。
