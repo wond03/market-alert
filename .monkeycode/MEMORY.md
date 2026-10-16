@@ -58,7 +58,7 @@
 - Context: Discovered by Agent while building the SMC research recorder
 - Category: Operations & Deployment
 - Instructions:
-  - 路线从「自研简单规则」转向 SMC。旧的 paper 影线记录器已停用（`convex/paper.ts` 仅占位，`paperState`/`paperTrades` 已从 schema 删除）。
+  - 路线从「自研简单规则」转向 SMC。旧的 paper 影线记录器已停用（`paperState`/`paperTrades` 已从 schema 删除；占位文件 `convex/paper.ts` 已于 2026-10-16 删除）。
   - SMC 记录器：`convex/smc.ts`（纯逻辑 `convex/smcCore.ts`，与 `backtest/smc.ts` 共用防漂移）。cron `smc track` 每 5 分钟跑 `internal.smc.scan`；开关 `SMC_TRACKING=1`（仅 prod）。只写库，不发 Telegram、不下单。表：`smcState`(处理到的最新 15m 时间 watermark)、`smcSignals`(status、出场 SL0.5%/TP0.6%/H8h 兜底、记 `mfe`/`mae`)。只增量处理 watermark 之后的新收盘 K（刚上线表可能为空）。**已于 2026-10-16 删除**（`convex/smc.ts`/`convex/smcCore.ts`、cron `smc track`、env `SMC_TRACKING`、表 `smcState`/`smcSignals`；prod 先清空数据再从 schema 移除表并部署）。
   - 判定用 LuxAlgo 开源定义（`convex/luxSmc.ts`，看盘/回测/作战面板共用）：摆动结构 leg(size=50)、BOS/CHoCH（收盘穿最近未穿摆动点）、订单块（含高波动 K 过滤、延伸至缓解）、FVG、EQH/EQL、溢价折价、强弱高低。每个结构突破记两条：`bias=break`（突破 K 收盘进）与 `bias=retest`（首次回踩突破 OB 进）。
   - 范围收缩为亚洲/伦敦/纽约三时段内收盘的信号（复用 `gate.SESSIONS`），每条打 `session` 标签。
@@ -87,9 +87,9 @@
 - Context: Discovered by Agent while backtesting the rule and SMC strategies
 - Category: Testing Methods
 - Instructions:
-  - 回测在 `backtest/`：`run.ts`（规则信号）、`battle.ts`（作战面板：对比统一确认窗口/间隔参数，`evaluateBattle` 的 `opts.zoneWindowSec`/`confirmSpanMax` 可覆盖，实例见脚本内 `CONFIGS`）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
+  - 回测在 `backtest/`：`battle.ts`（作战面板：对比统一确认窗口/间隔参数，`evaluateBattle` 的 `opts.zoneWindowSec`/`confirmSpanMax` 可覆盖，实例见脚本内 `CONFIGS`）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
   - Gate candlesticks 限制：单次 ≤2000 根，`limit` 不能与 `from`/`to` 同用，只能取最近 10000 点 → 15m≈104 天、5m≈35 天、1m≈7 天（回测用 15m）。
-  - 结论（重要）：①影线逆势规则修正「同根 K 线止损」乐观偏差后，单笔净期望约 +0.05%（成本量级），70/30 样本外略负（-0.05%）→ 无优势。②SMC 扫荡式表述毛收益≈0（reversal -0.03% t=-2.39、continuation 0.00%，平均 MFE 0.39% ≈ MAE 0.38%），所有切分（时段/1h 对齐/溢折价/参考位/分品种/前后半段）无一为正 → 无方向边际，调 SL/TP 无用。③任何单桶/单折的高 t 值不可信（过拟合）；只有「1h 趋势同向过滤」方向一致但 t≈0.5，仍不显著。**均不可实盘。**
+  - 结论（重要）：①影线逆势规则修正「同根 K 线止损」乐观偏差后，单笔净期望约 +0.05%（成本量级），70/30 样本外略负（-0.05%）→ 无优势。②SMC 扫荡式表述毛收益≈0（reversal -0.03% t=-2.39、continuation 0.00%，平均 MFE 0.39% ≈ MAE 0.38%），所有切分（时段/1h 对齐/溢折价/参考位/分品种/前后半段）无一为正 → 无方向边际，调 SL/TP 无用。③任何单桶/单折的高 t 值不可信（过拟合）；只有「1h 趋势同向过滤」方向一致但 t≈0.5，仍不显著。**均不可实盘。** 上述变体脚本（`run`/`smc_seq`/`smc_tf`/`session_sweep`/`positioning`/`luxsmc`）与生产策略无关，已于 2026-10-16 删除。
   - 资金费：Gate `funding_rate` 仅约 30 天；BTC ~0.0027%/8h、XAU ~0.0043%，量级可忽略（回测已按方向/时长并入成本）。
 
 [Project Knowledge Summary]

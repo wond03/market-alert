@@ -138,15 +138,11 @@ mindmap
 | 数据 | 一次性 HTTP POST，硬编码 prod Convex URL（非订阅/非轮询） |
 | 托管 | GitHub Pages，push `master` 且改 `market-dashboard/**` 触发 |
 
-## 7. 研究层 backtest（不产线）
+## 7. 回测
 
-| 脚本 | 测什么 |
+| 脚本 | 用途 |
 |---|---|
-| `battle.ts` | 作战面板统一窗口参数对比 |
-| `luxsmc.ts` | LuxAlgo 结构回测 |
-| `run.ts` | 4 条规则 + 动量/反转/组合 |
-| `smc_seq.ts` / `smc_tf.ts` | SMC 序列化 / 周期缩放回测 |
-| `session_sweep.ts` | 时段流动性扫荡 |
-| `positioning.ts` | 持仓/多空比条件收益 |
-| `history.ts` | 共享：Gate 历史分页 + 缓存 |
-| 结论 | 影线逆势≈成本、SMC 扫荡无方向边际，**均不可实盘** |
+| `backtest/battle.ts` | 用生产同口径 `evaluateBattle` 复算作战面板 |
+| `backtest/history.ts` | 共享：Gate 历史分页 + 缓存 |
+
+原研究层脚本（`luxsmc`/`run`/`smc_seq`/`smc_tf`/`session_sweep`/`positioning`）与生产策略无关，已于 2026-10-16 移除。
