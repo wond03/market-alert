@@ -2231,31 +2231,58 @@
     });
     return zones;
   }
-  function btTrigger(ltf, mtf, bias, zones, price, atrVal) {
-    if (bias !== "bull" && bias !== "bear") return { state: "高周期无明确方向", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
-    var buf = 0.15 * atrVal, inZone = null;
-    zones.forEach(function (z) {
-      if (price >= z.bottom - buf && price <= z.top + buf) {
-        if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
+function btTrigger(ltf, mtf, bias, zones, price, atrVal, mtfIv, ltfIv) {
+  if (bias !== "bull" && bias !== "bear") return { state: "高周期无明确方向", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
+  var WINDOW = 24 * 3; // 统一确认窗口：24 根 15m = 72 根 5m
+  var SPAN = 6;        // 确认1↔确认2 两根 5m K 索引差上限（顺序不限）
+  var buf = 0.15 * atrVal;
+  function zoneAt(p) {
+    var z = null;
+    zones.forEach(function (zz) {
+      if (p >= zz.bottom - buf && p <= zz.top + buf) {
+        if (!z || Math.abs(p - (zz.top + zz.bottom) / 2) < Math.abs(p - (z.top + z.bottom) / 2)) z = zz;
       }
     });
-    var mres = smcRunStructure(mtf, 4, "atr");
-    var mb = mres.breaks.length ? mres.breaks[mres.breaks.length - 1] : null;
-    var internalConfirmed = !!mb && mb.dir === bias && (mtf.length - 1 - mb.idx) <= 4;
-    var internalKind = internalConfirmed ? (mb.tag === "CHoCH" ? "CHoCH" : "BOS") : "";
-    var lres = smcRunStructure(ltf, 4, "atr");
-    var lb = lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null;
-    var recentBreak = lb && lb.dir === bias && (ltf.length - 1 - lb.idx) <= 3;
-    var last = ltf[ltf.length - 1], prev = ltf[ltf.length - 2];
-    var eng = btEngulf(prev, last, bias), pin = btPin(last, bias);
-    var confirmed = recentBreak || eng || pin;
-    var kind = recentBreak ? (lb.tag + (lb.dir === "bull" ? "向上" : "向下")) : (eng ? "吞没" : (pin ? "Pin Bar" : ""));
-    var state;
-    if (inZone && internalConfirmed) state = confirmed ? ("已到区域（" + btIvLabel(mtfIv) + " 内部确认：" + internalKind + " → " + btIvLabel(ltfIv) + " 触发：" + kind + "，可入场）") : ("已到区域，" + btIvLabel(mtfIv) + " 内部已确认，等待 " + btIvLabel(ltfIv) + " 触发（未触发不提示）");
-    else if (inZone) state = "已到区域，等待 " + btIvLabel(mtfIv) + " 内部反向结构确认（回调未结束）";
-    else state = "价格未到入区，等待回踩";
-    return { state: state, tone: inZone ? bias : "", inZone: inZone, confirmed: !!(confirmed && internalConfirmed), kind: kind, internalKind: internalKind, ltfBreak: lb };
+    return z;
   }
+  var n = ltf.length, lo = Math.max(0, n - 1 - WINDOW), start = -1, z0 = null;
+  for (var i = lo; i < n; i++) { var zz0 = zoneAt(ltf[i].close); if (zz0) { start = i; z0 = zz0; break; } }
+  if (start < 0 || !z0) return { state: "价格未到入区，等待回踩", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
+  // 区域失效：窗口内任一 5m 收盘穿远端边界（做多=跌破下沿；做空=升破上沿）。
+  for (var i2 = start + 1; i2 < n; i2++) {
+    if (z0.bias === "bull" ? ltf[i2].close < z0.bottom : ltf[i2].close > z0.top)
+      return { state: "价格未到入区，等待回踩", tone: "", inZone: null, confirmed: false, kind: "", internalKind: "" };
+  }
+  // 确认1（15m 内部同向突破，映射到其被确认后的 5m 索引）与确认2（5m 同向触发）。
+  var mres = smcRunStructure(mtf, 4, "atr");
+  var c1 = [];
+  mres.breaks.forEach(function (b) {
+    if (b.dir !== bias) return;
+    var bcClose = b.time + 900;
+    for (var i3 = start; i3 < n; i3++) { if (ltf[i3].time + 300 >= bcClose) { c1.push({ i: i3, kind: b.tag }); break; } }
+  });
+  var lres = smcRunStructure(ltf, 4, "atr");
+  var c2 = [];
+  for (var i4 = start; i4 < n; i4++) {
+    var brk = null;
+    for (var j = 0; j < lres.breaks.length; j++) { if (lres.breaks[j].idx === i4 && lres.breaks[j].dir === bias) { brk = lres.breaks[j]; break; } }
+    if (brk) c2.push({ i: i4, kind: brk.tag + (brk.dir === "bull" ? "向上" : "向下") });
+    else if (i4 > 0 && btEngulf(ltf[i4 - 1], ltf[i4], bias)) c2.push({ i: i4, kind: "吞没" });
+    else if (btPin(ltf[i4], bias)) c2.push({ i: i4, kind: "Pin Bar" });
+  }
+  var bestD = Infinity, b1 = null, b2 = null;
+  c1.forEach(function (a) { c2.forEach(function (b) { var d = Math.abs(a.i - b.i); if (d <= SPAN && d < bestD) { bestD = d; b1 = a; b2 = b; } }); });
+  var internalKind = b1 ? (b1.kind === "CHoCH" ? "CHoCH" : "BOS") : "";
+  var kind = b2 ? b2.kind : "";
+  var confirmed = !!b1 && !!b2;
+  var inZ = zoneAt(price);
+  var state;
+  if (confirmed) state = "窗口内确认齐全（" + btIvLabel(mtfIv) + " 内部：" + internalKind + " → " + btIvLabel(ltfIv) + " 触发：" + kind + "，可入场）";
+  else if (b1) state = "窗口内 " + btIvLabel(mtfIv) + " 已确认，" + btIvLabel(ltfIv) + " 触发待出现";
+  else if (b2) state = "窗口内 " + btIvLabel(ltfIv) + " 已触发，" + btIvLabel(mtfIv) + " 内部确认待出现";
+  else state = "已到区域，窗口内等待确认";
+  return { state: state, tone: inZ ? bias : "", inZone: inZ, confirmed: confirmed, kind: kind, internalKind: internalKind, ltfBreak: lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null };
+}
   function btLiquiditySide(htfRes, ref, dir) {
     var arr = dir === "up" ? htfRes.highs : htfRes.lows;
     return arr.map(function (p) { return p.price; })
@@ -2391,7 +2418,7 @@
       });
       zones.sort(function (a, b) { return a.dist - b.dist; });
     }
-    var trig = btTrigger(ltf, mtf, bias, zones, price, atrVal);
+    var trig = btTrigger(ltf, mtf, bias, zones, price, atrVal, mtfIv, ltfIv);
     var risk = btRisk(bias, trig.inZone || zones[0], htfRes, price, atrVal, btIntradayLevels(mtf, nowSec));
     var trail = smcTrailing(htf, 8);
     var sweep = btSweep(htfRes, htf, bias);

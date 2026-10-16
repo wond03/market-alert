@@ -69,8 +69,8 @@
 - Context: Discovered by Agent while building the battle panel and removing the MTF SMC system
 - Category: Operations & Deployment
 - Instructions:
-  - 作战面板 `convex/battle.ts`（纯逻辑 `convex/battleCore.ts`，复用 `luxSmc`）：1h 结构(size=50)只作背景偏置门 → 15m **摆动结构**（`MTF_DIR_SWING=SWING_LEN=8`）的 BOS/CHoCH 定日内方向（必须收盘确认，影线不算；方向不明确=range 则观望，不用内部结构硬定）→ 入区只用 15m **摆动结构**未缓解 OB/FVG（内部结构 OB/FVG 不单独算入区，只作回调确认/微调）→ 5m 价格在区内且出现同向确认（CHoCH/BOS/吞没/Pin Bar）。**两层确认链**：确认 1 = 15m 内部结构（`INTERNAL_LEN=4`）出现同向 CHoCH/BOS（回调结束，`INTERNAL_CONFIRM_LOOKBACK=3` 根内）；确认 2 = 5m 扣扳机（结构突破/吞没/Pin Bar）。两层都满足才入库 + Telegram，卡片显示「确认 15m / 确认 5m」两行。只推「双层确认入场」一种事件。规则：方向更新只有摆动结构出现反向 BOS/CHoCH 才发生，内部结构反向只视为回调、不反手（内部结构可累积最终触发摆动结构改变）。
-  - 表：`battleState`(key=gate:SYMBOL, firedZone)、`battleSignals`；cron `battle signal` 每 1 分钟；开关 `BATTLE=1`（仅 prod）。去重：**同一入区当天只发一次**，仅当该区被有效破坏（收盘穿远端边界 或 收盘反向穿该次方向摆动的**结构锚点** `dirLast.anchor`：做多=突破前最近摆动低点 Higher Low，做空=最近摆动高点 Lower High；区别于突破位 `dirLast.level`）才重置、允许重标为新区域（`firedZoneDead`）。定方向的 15m 摆动 BOS/CHoCH 需带**位移硬过滤**（`hasDisplacement`，范围 ≥ `DISP_MULT=1.5`×ATR），不足即 direction=range 观望。手动：`battle:scan`、`battle:recentBattleSignals`。看盘页「作战面板」为同口径前端镜像。
+  - 作战面板 `convex/battle.ts`（纯逻辑 `convex/battleCore.ts`，复用 `luxSmc`）：1h 结构(size=50)只作背景偏置门 → 15m **摆动结构**（`MTF_DIR_SWING=SWING_LEN=8`）的 BOS/CHoCH 定日内方向（必须收盘确认，影线不算；方向不明确=range 则观望，不用内部结构硬定）→ 入区只用 15m **摆动结构**未缓解 OB/FVG（内部结构 OB/FVG 不单独算入区，只作回调确认/微调）→ 5m 价格在区内且出现同向确认（CHoCH/BOS/吞没/Pin Bar）。**统一确认窗口**（`ZONE_WINDOW_BARS=24`=6h；起点=首次入区所在 5m K；任一 5m 收盘穿区域远端边界即失效清窗；方向翻转即作废）：确认 1 = 15m 内部结构（`INTERNAL_LEN=4`）同向 CHoCH/BOS；确认 2 = 5m 扣扳机（结构突破/吞没/Pin Bar）；两者须同一窗口内、5m 索引差 ≤ `CONFIRM_SPAN_MAX=6`（顺序不限）。两者都满足才入库 + Telegram，卡片显示「确认 15m / 确认 5m」两行。只推「双层确认入场」一种事件。规则：方向更新只有摆动结构出现反向 BOS/CHoCH 才发生，内部结构反向只视为回调、不反手（内部结构可累积最终触发摆动结构改变）。
+  - 表：`battleState`(key=gate:SYMBOL, firedZone, zoneKey, zoneStartT)、`battleSignals`；cron `battle signal` 每 1 分钟；开关 `BATTLE=1`（仅 prod）。去重：**同一入区当天只发一次**，仅当该区被有效破坏（窗口内任一 5m 收盘穿区域远端边界，`zoneInvalidated`）才重置、允许重标为新区域。定方向的 15m 摆动 BOS/CHoCH 需带**位移硬过滤**（`hasDisplacement`，范围 ≥ `DISP_MULT=1.5`×ATR），不足即 direction=range 观望。手动：`battle:scan`、`battle:recentBattleSignals`。看盘页「作战面板」为同口径前端镜像。
   - 原独立 MTF SMC 系统 `convex/mtfSmc.ts` 及表 `mtfSmcState`/`mtfSmcSignals` 已于 2026-10-14 移除（与 battle 推送重复）：cron/开关/文件已删、prod 已清库并部署；`npx convex run mtfSmc:*` 不再有效。
 
 [Project Knowledge Summary]
@@ -87,7 +87,7 @@
 - Context: Discovered by Agent while backtesting the rule and SMC strategies
 - Category: Testing Methods
 - Instructions:
-  - 回测在 `backtest/`：`run.ts`（规则信号）、`smc.ts`（SMC 扫荡）、`battle.ts`（作战面板：对比确认 1 的 15m 内部结构回看 3/4/5，`evaluateBattle` 的 `opts.internalConfirmLookback` 可覆盖）、`funnel.ts`（闸门漏斗诊断：各级过滤存活数 + 放宽敏感性）、`shadow.ts`（分层通过率：方向/入区/确认1/确认2/RR，含生产逐根口径与事件序列口径）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
+  - 回测在 `backtest/`：`run.ts`（规则信号）、`smc.ts`（SMC 扫荡）、`battle.ts`（作战面板：对比统一确认窗口/间隔参数，`evaluateBattle` 的 `opts.zoneWindowSec`/`confirmSpanMax` 可覆盖，实例见脚本内 `CONFIGS`）、`funnel.ts`（闸门漏斗诊断：各级过滤存活数 + 放宽敏感性）、`shadow.ts`（分层通过率：方向/入区/确认1/确认2/RR，含生产逐根口径与事件序列口径）、`history.ts`（Gate 历史 K 线）。运行：`./node_modules/.bin/esbuild backtest/<f>.ts --bundle --platform=node --format=esm --outfile=/tmp/x.mjs && node /tmp/x.mjs`；历史缓存 `/tmp/opencode/bt-cache`（24h）。脚本直接 import `convex` 判定函数，保证与生产同逻辑。
   - Gate candlesticks 限制：单次 ≤2000 根，`limit` 不能与 `from`/`to` 同用，只能取最近 10000 点 → 15m≈104 天、5m≈35 天、1m≈7 天（回测用 15m）。
   - 结论（重要）：①影线逆势规则修正「同根 K 线止损」乐观偏差后，单笔净期望约 +0.05%（成本量级），70/30 样本外略负（-0.05%）→ 无优势。②SMC 扫荡式表述毛收益≈0（reversal -0.03% t=-2.39、continuation 0.00%，平均 MFE 0.39% ≈ MAE 0.38%），所有切分（时段/1h 对齐/溢折价/参考位/分品种/前后半段）无一为正 → 无方向边际，调 SL/TP 无用。③任何单桶/单折的高 t 值不可信（过拟合）；只有「1h 趋势同向过滤」方向一致但 t≈0.5，仍不显著。**均不可实盘。**
   - 资金费：Gate `funding_rate` 仅约 30 天；BTC ~0.0027%/8h、XAU ~0.0043%，量级可忽略（回测已按方向/时长并入成本）。

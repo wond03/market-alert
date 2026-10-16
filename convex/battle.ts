@@ -138,10 +138,14 @@ export const scan = internalAction({
         }
       }
 
-      const prevFiredZone = state?.firedZone ?? "";
-      const res = evaluateBattle(htf, mtf, ltf, prevFiredZone, now, EXCHANGE, symbol);
+const prev = {
+  firedZone: state?.firedZone ?? "",
+  zoneKey: state?.zoneKey ?? "",
+  zoneStartT: state?.zoneStartT ?? null,
+};
+const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol);
 
-      let firedZone = prevFiredZone;
+let firedZone = res.firedZone;
       if (res.signal) {
         // 上一笔未了结信号仍在（新信号到来）→ 记为「被取代」。
         if (openTs != null && openDir) {
@@ -168,7 +172,6 @@ export const scan = internalAction({
             });
           }
         }
-        firedZone = res.firedZone;
         openDir = res.signal.bias;
         openEntry = res.signal.entryPrice;
         openStop = res.signal.stopPrice;
@@ -182,10 +185,12 @@ export const scan = internalAction({
         fired++;
       }
 
-      await ctx.runMutation(internal.battle.upsertState, {
-        key,
-        firedZone,
-        openDir,
+await ctx.runMutation(internal.battle.upsertState, {
+  key,
+  firedZone,
+  zoneKey: res.zoneKey,
+  zoneStartT: res.zoneStartT,
+  openDir,
         openEntry,
         openStop,
         openTarget,
@@ -248,6 +253,8 @@ export const upsertState = internalMutation({
   args: {
     key: v.string(),
     firedZone: v.string(),
+    zoneKey: v.string(),
+    zoneStartT: v.union(v.number(), v.null()),
     openDir: v.union(v.string(), v.null()),
     openEntry: v.union(v.number(), v.null()),
     openStop: v.union(v.number(), v.null()),

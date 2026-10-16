@@ -9,9 +9,11 @@
 
 import { fetchHistory, type Candle } from "./history";
 import { contractOf } from "../convex/exchanges";
-import { battleZones, hasDisplacement, MTF_DIR_SWING, CONFIRM_LOOKBACK, buildRisk, ZONE_BUF_ATR } from "../convex/battleCore";
+import { battleZones, hasDisplacement, MTF_DIR_SWING, buildRisk, ZONE_BUF_ATR } from "../convex/battleCore";
 import { runStructure, atr, ATR_LEN, INTERNAL_LEN } from "../convex/luxSmc";
 import * as gate from "../convex/gate";
+
+const CONFIRM_LOOKBACK = 3;
 
 const SYMBOLS = ["BTC", "XAU"];
 const FIVE_M = 9000;

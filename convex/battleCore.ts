@@ -22,8 +22,12 @@ export const HTF = { tf: "1h", sec: 3600, swing: SWING_LEN }; // 背景：只定
 export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
 export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
-export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
-export const INTERNAL_CONFIRM_LOOKBACK = 4; // 最近 N 根 15m 内部结构的同向突破算「确认 1」（回测 3/4/5 后定 4：3 越严格但漏单，4 兼顾；5 新增的 offset=5 信号净负）
+
+// 统一确认窗口：自「首次入区」起算的最大时长，窗口内必须同时出现过入区、确认1、确认2，且区域未失效。
+export const ZONE_WINDOW_BARS = 24; // 24 根 15m
+export const ZONE_WINDOW_SEC = ZONE_WINDOW_BARS * 900; // 21600s = 6h
+// 被用到的「确认1」与「确认2」两根 5m K 的索引差绝对值上限（顺序不限）。
+export const CONFIRM_SPAN_MAX = 6; // 6 根 5m = 30 分钟
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
@@ -33,10 +37,19 @@ export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的
 
 type Bias = "bull" | "bear";
 
-// 回测可覆盖的可调阈值；生产不传，沿用上方常量，保证线上行为不变。
+// 逐标的持久化状态：当天去重指纹 + 统一确认窗口（当前跟踪区域及其首次入区时间）。
+export type BattleState = {
+  firedZone: string; // 最近已推送的区域指纹；空串表示可重新布防
+  zoneKey: string; // 当前窗口跟踪的区域指纹；空串 = 无活动窗口
+  zoneStartT: number | null; // 首次入区所在的 5m K 开盘时间（UTC 秒）
+};
+
+export const EMPTY_BATTLE_STATE: BattleState = { firedZone: "", zoneKey: "", zoneStartT: null };
+
+// 回测可覆盖的可调阈值；生产不传，沿用上方常量。
 export type BattleEvalOpts = {
-  internalConfirmLookback?: number; // 覆盖 INTERNAL_CONFIRM_LOOKBACK（确认 1：15m 内部结构回看根数）
-  confirmLookback?: number; // 覆盖 CONFIRM_LOOKBACK（确认 2：5m 触发回看根数）
+  zoneWindowSec?: number; // 覆盖 ZONE_WINDOW_SEC
+  confirmSpanMax?: number; // 覆盖 CONFIRM_SPAN_MAX
 };
 
 export type Zone = {
@@ -85,24 +98,75 @@ export function hasDisplacement(
   return false;
 }
 
-// firedZone 重置判据：区域被价格「有效破坏」才允许重新标记，取代原先「离开入区即重置」。
-// 破坏 = 收盘穿过区域远端边界（做多→跌破下沿；做空→升破上沿），或结构确认失效
-// （收盘反向穿过导致入场那次摆动的结构锚点 dirLast.anchor：做多=该次突破前最近摆动低点 Higher Low，
-//  做空=最近摆动高点 Lower High；注意此处用的是结构锚点，不是 BOS/CHoCH 的突破位 dirLast.level）。
-function firedZoneDead(
-  firedZone: string,
-  price: number,
-  dirLast: StructBreak | undefined,
-): boolean {
-  if (!firedZone) return false;
-  const parts = firedZone.split("#");
-  const zBias = parts[0];
-  const zBottom = Number(parts[3]);
-  const zTop = Number(parts[4]);
-  const zoneBroken = zBias === "bull" ? price < zBottom : price > zTop;
-  const structBroken =
-    !!dirLast && (zBias === "bull" ? price < dirLast.anchor : price > dirLast.anchor);
-  return zoneBroken || structBroken;
+// ---- 统一确认窗口辅助 ----
+function zoneToKey(z: Zone): string {
+  return `${z.bias}#${z.kind}#${z.idx}#${z.bottom}#${z.top}`;
+}
+function parseZoneKey(key: string): Zone | null {
+  const p = key.split("#");
+  if (p.length < 5) return null;
+  return { bias: p[0] as Bias, kind: p[1] as Zone["kind"], idx: Number(p[2]), bottom: Number(p[3]), top: Number(p[4]), t: 0 };
+}
+// 区域失效：窗口内任一 5m 收盘价穿过远端边界（做多=收盘 < 下沿；做空=收盘 > 上沿）。
+function zoneInvalidated(ltf: Candle[], startT: number, lastCloseT: number, z: Zone): boolean {
+  for (const c of ltf) {
+    const closeT = c.t + LTF.sec;
+    if (closeT <= startT || closeT > lastCloseT) continue;
+    if (z.bias === "bull" ? c.c < z.bottom : c.c > z.top) return true;
+  }
+  return false;
+}
+function firstLtfIdxClosingAtOrAfter(ltf: Candle[], tClose: number): number {
+  for (let i = 0; i < ltf.length; i++) if (ltf[i].t + LTF.sec >= tClose) return i;
+  return -1;
+}
+type C1 = { i: number; tag: string };
+type C2 = { i: number; label: string };
+// 确认1：窗口内出现的 15m 内部结构同向突破（映射到其被确认后的 5m K 索引）。
+function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C1[] {
+  const out: C1[] = [];
+  for (const b of runStructure(mtf, INTERNAL_LEN).breaks) {
+    if (b.dir !== bias) continue;
+    const bc = b.t + MTF.sec; // 15m 收盘时间
+    if (bc <= startT || bc > lastCloseT) continue;
+    const i = firstLtfIdxClosingAtOrAfter(ltf, bc);
+    if (i >= 0) out.push({ i, tag: b.tag });
+  }
+  return out;
+}
+// 确认2：窗口内出现的 5m 同向触发（内部突破 / 吞没 / Pin Bar）。
+function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C2[] {
+  const breaks = runStructure(ltf, INTERNAL_LEN).breaks;
+  const dirWord = bias === "bull" ? "向上" : "向下";
+  const out: C2[] = [];
+  for (let i = 0; i < ltf.length; i++) {
+    const closeT = ltf[i].t + LTF.sec;
+    if (closeT <= startT || closeT > lastCloseT) continue;
+    const b = breaks.find((x) => x.idx === i && x.dir === bias);
+    if (b) {
+      out.push({ i, label: `${b.tag} ${dirWord} 破 ${gate.fmtPrice(b.level)}` });
+    } else if (i > 0 && isEngulf(ltf[i - 1], ltf[i], bias)) {
+      out.push({ i, label: "吞没" });
+    } else if (isPin(ltf[i], bias)) {
+      out.push({ i, label: "Pin Bar" });
+    }
+  }
+  return out;
+}
+// 取索引差最小且 ≤ maxSpan 的「确认1×确认2」组合（顺序不限）；返回用于展示的两个确认文案。
+function closestPair(c1: C1[], c2: C2[], maxSpan: number): { confirm: string; confirmInternal: string } | null {
+  let best: { confirm: string; confirmInternal: string } | null = null;
+  let bestD = Infinity;
+  for (const a of c1) {
+    for (const b of c2) {
+      const d = Math.abs(a.i - b.i);
+      if (d <= maxSpan && d < bestD) {
+        bestD = d;
+        best = { confirm: b.label, confirmInternal: a.tag === "CHoCH" ? "CHoCH" : "BOS" };
+      }
+    }
+  }
+  return best;
 }
 
 export function battleZones(candles: Candle[], bias: Bias): Zone[] {
@@ -345,17 +409,19 @@ export function buildMessage(
 }
 
 export type BattleEval = {
-  bias: string; // bull | bear | range
+  bias: string; // bull|bear|range
   firedZone: string;
+  zoneKey: string;
+  zoneStartT: number | null;
   signal: BattleSignal | null;
 };
 
-// 给定已收盘的 HTF/MTF/LTF K 线（升序、末尾为最近已收盘 K），返回本次扫描结果。
+// 给定已收盘的 HTF/MTF/LTF K 线（升序、末尾为最近已收盘 K）与上次持久化状态，返回本次扫描结果。
 export function evaluateBattle(
   htf: Candle[],
   mtf: Candle[],
   ltf: Candle[],
-  prevFiredZone: string,
+  prev: BattleState,
   now: number,
   exchange = "gate",
   symbol = "BTC",
@@ -372,109 +438,99 @@ export function evaluateBattle(
       ? htfTrend
       : "range";
 
-  let firedZone = prevFiredZone;
+  // 方向失效 → 清空窗口与去重，观望。
+  const resetRange: BattleEval = { bias: "range", firedZone: "", zoneKey: "", zoneStartT: null, signal: null };
 
   // 日内方向：由 15m 结构刷新，且须落在当前北京日内（「当天有效」）。
-  // 出现反向 CHoCH/BOS 时 trendAtEnd 会翻向，方向即自动降级，无需额外收盘破坏判据。
   const mtfSt = runStructure(mtf, MTF_DIR_SWING);
   const dir = mtfSt.trendAtEnd;
   const dirLast = mtfSt.breaks.length ? mtfSt.breaks[mtfSt.breaks.length - 1] : undefined;
   const dirFresh = !!dirLast && dirLast.t >= gate.currentDayStart(now);
-  if ((dir !== "bull" && dir !== "bear") || !dirFresh) {
-    return { bias: "range", firedZone: "", signal: null };
-  }
+  if ((dir !== "bull" && dir !== "bear") || !dirFresh) return resetRange;
   // 位移硬过滤：定方向的这根 15m 摆动 BOS/CHoCH 必须带明确位移（同向且范围 ≥ DISP_MULT×ATR）。
-  // 位移不足视为「摆动不明确」→ 方向不明 → 观望，不用内部结构硬定方向。
   const dirDisp = hasDisplacement(
     mtf,
     { kind: "OB", bias: dir as Bias, top: 0, bottom: 0, idx: dirLast!.idx, t: dirLast!.t },
     atr(mtf, ATR_LEN),
   );
-  if (!dirDisp) {
-    return { bias: "range", firedZone: "", signal: null };
-  }
+  if (!dirDisp) return resetRange;
   const bias: Bias = dir;
 
   const sweep = sweepQuality(htfSt, htf, bias, SWEEP_LOOKBACK);
-
-  const price = ltf[ltf.length - 1].c;
+  const last = ltf[ltf.length - 1];
+  const price = last.c;
+  const lastCloseT = last.t + LTF.sec;
   const ltfAtr = atr(ltf, 14)[ltf.length - 1] || price * 0.002;
-  const zones = battleZones(mtf, bias);
-  // 确认 1（15m 内部结构）：摆动结构定方向后，要求内部结构出现同向 CHoCH/BOS，代表回调结束。
-  const mtfInternal = runStructure(mtf, INTERNAL_LEN);
-  const ib = mtfInternal.breaks.length ? mtfInternal.breaks[mtfInternal.breaks.length - 1] : undefined;
-  const internalLookback = opts.internalConfirmLookback ?? INTERNAL_CONFIRM_LOOKBACK;
-  const internalConfirm = !!ib && ib.dir === bias && mtf.length - 1 - ib.idx <= internalLookback;
-  const confirmInternal = internalConfirm ? (ib!.tag === "CHoCH" ? "CHoCH" : "BOS") : "";
-  const buf = ZONE_BUF_ATR * ltfAtr;
 
-  let inZone: Zone | null = null;
-  for (const z of zones) {
-    if (price >= z.bottom - buf && price <= z.top + buf) {
-      if (
-        !inZone ||
-        Math.abs(price - (z.top + z.bottom) / 2) <
-          Math.abs(price - (inZone.top + inZone.bottom) / 2)
-      ) {
-        inZone = z;
-      }
+  // ---- 统一确认窗口状态机 ----
+  let zoneKey = prev.zoneKey;
+  let zoneStartT = prev.zoneStartT;
+  let firedZone = prev.firedZone;
+
+  // 方向变化：跟踪的区域作废，清窗口（去重指纹保留，由失效判据决定是否重置）。
+  if (zoneKey && zoneKey.split("#")[0] !== bias) {
+    zoneKey = "";
+    zoneStartT = null;
+  }
+
+  if (zoneKey && zoneStartT != null) {
+    const z = parseZoneKey(zoneKey)!;
+    const expired = lastCloseT - zoneStartT > (opts.zoneWindowSec ?? ZONE_WINDOW_SEC);
+    const invalid = zoneInvalidated(ltf, zoneStartT, lastCloseT, z);
+    if (expired || invalid) {
+      if (firedZone === zoneKey) firedZone = "";
+      zoneKey = "";
+      zoneStartT = null;
     }
   }
 
-  if (!inZone) {
-    // 价格离开所有入区：仅当原入区被有效破坏（收盘穿远端边界/结构锚点）才重置，否则保留 firedZone。
-    const dead = firedZoneDead(prevFiredZone, price, dirLast);
-    return { bias, firedZone: dead ? "" : firedZone, signal: null };
+  // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
+  if (!zoneKey) {
+    const buf = ZONE_BUF_ATR * ltfAtr;
+    let inZone: Zone | null = null;
+    for (const z of battleZones(mtf, bias)) {
+      if (price >= z.bottom - buf && price <= z.top + buf) {
+        if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
+      }
+    }
+    if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null };
+    zoneKey = zoneToKey(inZone);
+    zoneStartT = last.t;
   }
 
-  const ltfSt = runStructure(ltf, INTERNAL_LEN);
-  const lb = ltfSt.breaks.length ? ltfSt.breaks[ltfSt.breaks.length - 1] : undefined;
-  const confirmLookback = opts.confirmLookback ?? CONFIRM_LOOKBACK;
-  const recentBreak = !!lb && lb.dir === bias && ltf.length - 1 - lb.idx <= confirmLookback;
-  const last = ltf[ltf.length - 1];
-  const prev = ltf[ltf.length - 2];
-  const eng = isEngulf(prev, last, bias);
-  const pin = isPin(last, bias);
-  const dirWord = bias === "bull" ? "向上" : "向下";
-  // 入场信号：进入合格入区且出现低周期 5m 同向确认（结构突破 / 吞没 / Pin Bar）才提示。
-  const confirm = recentBreak
-    ? `${lb!.tag} ${dirWord} 破 ${gate.fmtPrice(lb!.level)}`
-    : eng
-      ? "吞没"
-      : pin
-        ? "Pin Bar"
-        : "";
-  if (!confirm || !internalConfirm) {
-    // 确认链不完整（15m 内部未结束回调 或 5m 未扣扳机）：不推送，保持布防等待确认。
-    return { bias, firedZone, signal: null };
-  }
+  const z = parseZoneKey(zoneKey)!;
+  const startT = zoneStartT as number;
 
-  const zoneKey = `${bias}#${inZone.kind}#${inZone.idx}#${inZone.bottom}#${inZone.top}`;
-  if (firedZone === zoneKey) {
-    // 同一入区当天去重：仅当原入区被有效破坏才允许重新标记为新区域。
-    const dead = firedZoneDead(firedZone, price, dirLast);
-    return { bias, firedZone: dead ? "" : firedZone, signal: null };
-  }
+  // 窗口内：确认1（15m 内部同向突破）与确认2（5m 触发）事件所在的 5m K 索引。
+  const c1 = confirm1Indices(mtf, ltf, bias, startT, lastCloseT);
+  const c2 = confirm2Indices(ltf, bias, startT, lastCloseT);
+  const pair = closestPair(c1, c2, opts.confirmSpanMax ?? CONFIRM_SPAN_MAX);
+  if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null };
 
-  const risk = buildRisk(bias, inZone, htfSt, price, ltfAtr, intradayLevels(mtf, now));
+  // 当天去重：同一区域只推一次。
+  if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null };
+
+  const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
   const dirTag = dirLast ? dirLast.tag : "结构";
-  const dirLevel = dirLast ? dirLast.level : inZone.top;
+  const dirLevel = dirLast ? dirLast.level : z.top;
   const bgOk = bg === "bull" || bg === "bear";
   const bgTag = bgOk && htfLast ? htfLast.tag : "";
   const bgLevel = bgOk && htfLast ? htfLast.level : 0;
   return {
     bias,
     firedZone: zoneKey,
+    zoneKey,
+    zoneStartT,
     signal: {
       bias: bias === "bull" ? "long" : "short",
       bg,
       htfTag: dirTag,
       htfLevel: dirLevel,
-      zoneKind: inZone.kind,
-      zoneTop: inZone.top,
-      zoneBottom: inZone.bottom,
-      confirm,
-      confirmInternal,
+      zoneKind: z.kind,
+      zoneTop: z.top,
+      zoneBottom: z.bottom,
+      confirm: pair.confirm,
+      confirmInternal: pair.confirmInternal,
       entryPrice: risk.entry,
       stopPrice: risk.stop,
       targetPrice: risk.target,
@@ -491,9 +547,9 @@ export function evaluateBattle(
         bgLevel,
         dirTag,
         dirLevel,
-        inZone,
-        confirm,
-        confirmInternal,
+        z,
+        pair.confirm,
+        pair.confirmInternal,
         risk.entry,
         risk.stop,
         risk.stopPct,

@@ -62,6 +62,8 @@ export default defineSchema({
   battleState: defineTable({
     key: v.string(),
     firedZone: v.string(), // 最近已推送的区域指纹；空串表示可重新布防
+    zoneKey: v.optional(v.string()), // 统一确认窗口：当前跟踪的区域指纹；空串/缺省 = 无活动窗口
+    zoneStartT: v.optional(v.union(v.number(), v.null())), // 窗口起点：首次入区所在的 5m K 开盘时间
     openDir: v.optional(v.union(v.string(), v.null())), // 未了结信号方向：long | short
     openEntry: v.optional(v.union(v.number(), v.null())), // 未了结信号入场价
     openStop: v.optional(v.union(v.number(), v.null())),
