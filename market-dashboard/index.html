@@ -2241,7 +2241,7 @@
     });
     var mres = smcRunStructure(mtf, 4, "atr");
     var mb = mres.breaks.length ? mres.breaks[mres.breaks.length - 1] : null;
-    var internalConfirmed = !!mb && mb.dir === bias && (mtf.length - 1 - mb.idx) <= 3;
+    var internalConfirmed = !!mb && mb.dir === bias && (mtf.length - 1 - mb.idx) <= 4;
     var internalKind = internalConfirmed ? (mb.tag === "CHoCH" ? "CHoCH" : "BOS") : "";
     var lres = smcRunStructure(ltf, 4, "atr");
     var lb = lres.breaks.length ? lres.breaks[lres.breaks.length - 1] : null;

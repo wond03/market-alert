@@ -23,7 +23,7 @@ export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
 export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
 export const CONFIRM_LOOKBACK = 3; // 最近 N 根 LTF 内的同向突破算确认
-export const INTERNAL_CONFIRM_LOOKBACK = 3; // 最近 N 根 15m 内部结构的同向突破算「确认 1」（待回测对比 4–5 根：3 根=45 分钟是否足够完成入区回调结束确认）
+export const INTERNAL_CONFIRM_LOOKBACK = 4; // 最近 N 根 15m 内部结构的同向突破算「确认 1」（回测 3/4/5 后定 4：3 越严格但漏单，4 兼顾；5 新增的 offset=5 信号净负）
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
