@@ -61,7 +61,7 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 最小两列：建议数量、实际数量。CSV 列：
 
 ```text
-date,symbol,subgroup,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,notes
+date,symbol,subgroup,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,owner,notes
 ```
 
 `devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
@@ -72,3 +72,10 @@ date,symbol,subgroup,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,ex
 - N < 20，或胜率距 50% 不足 10pp，结论标注「待复核」。
 - avgRnet < 1.0R，标注「成本敏感」，提示 taker、滑点、资金费未完全计入。
 - N ≥ 30 复核与成本口径调整排在复议之后，不现在做。
+
+## 实盘计时与录入
+
+- 计时起点：2026-10-17 22:57 UTC（北京 2026-10-18 06:57），部署完成时间；不从第一条告警起算。
+- 张数口径：固定名义优先。qty = max(1, floor(375 / (px × 0.0001)))，notional = qty × px × 0.0001，保证金 = notional / 100；价格变化只改张数，名义目标保持 375U。下限为 1 张：极端价格下 375U 不足 1 张名义时仍取 1 张，实际名义会高于 375U。
+- 首条告警人工核对：张数 = floor(375 / (px × 0.0001))，保证金按实际张数折算，子组标签与 SL/TP 齐全（buildMessage 已输出止损与止盈；无 TP 不开仓，target 必不为空）；核对结果记入 notes。
+- 录入人：wond03（唯一执行人）；换人时先更新此条目。断档处理：责任人缺位时暂停执行并标注「断档」，不得无主录入；事后补录须在 notes 注明补录时间。
