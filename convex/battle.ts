@@ -13,7 +13,7 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import * as exchanges from "./exchanges";
 import type { Candle, Exchange } from "./exchanges";
-import { buildMessage, evaluateBattle, HTF, MTF, LTF } from "./battleCore";
+import { buildMessage, evaluateBattle, HTF, MTF, LTF, resolveSignal } from "./battleCore";
 import { sendTelegram } from "./telegram";
 
 function env(name: string): string {
@@ -21,29 +21,6 @@ function env(name: string): string {
     .process;
   const value = proc?.env?.[name];
   return value ? String(value).trim() : "";
-}
-
-// 信号了结判定：按时间顺序逐根，止损/止盈均按影线触及，先到者了结（同根先判止损）。
-type Resolution = { result: "stop" | "target"; ts: number; price: number };
-
-function resolveSignal(
-  ltf: Candle[],
-  fromTs: number,
-  dir: string,
-  stop: number | null,
-  target: number | null,
-): Resolution | null {
-  for (const c of ltf) {
-    if (c.t < fromTs + LTF.sec) continue;
-    if (dir === "short") {
-      if (stop != null && c.h >= stop) return { result: "stop", ts: c.t, price: stop };
-      if (target != null && c.l <= target) return { result: "target", ts: c.t, price: target };
-    } else {
-      if (stop != null && c.l <= stop) return { result: "stop", ts: c.t, price: stop };
-      if (target != null && c.h >= target) return { result: "target", ts: c.t, price: target };
-    }
-  }
-  return null;
 }
 
 // 由入场/止损/止盈反推盈亏比。

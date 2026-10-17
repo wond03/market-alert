@@ -655,3 +655,26 @@ export function evaluateBattle(
     },
   };
 }
+
+export type Resolution = { result: "stop" | "target"; ts: number; price: number };
+
+// 信号了结判定：从信号根之后（fromTs + LTF.sec）逐根扫描；止损/止盈均按影线触及，同根先判止损。
+export function resolveSignal(
+  ltf: Candle[],
+  fromTs: number,
+  dir: string,
+  stop: number | null,
+  target: number | null,
+): Resolution | null {
+  for (const c of ltf) {
+    if (c.t < fromTs + LTF.sec) continue;
+    if (dir === "short") {
+      if (stop != null && c.h >= stop) return { result: "stop", ts: c.t, price: stop };
+      if (target != null && c.l <= target) return { result: "target", ts: c.t, price: target };
+    } else {
+      if (stop != null && c.l <= stop) return { result: "stop", ts: c.t, price: stop };
+      if (target != null && c.h >= target) return { result: "target", ts: c.t, price: target };
+    }
+  }
+  return null;
+}
