@@ -61,7 +61,7 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 最小两列：建议数量、实际数量。CSV 列：
 
 ```text
-date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,owner,notes
+date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,exit_reason,bars_held,devR,regime,owner,notes
 ```
 
 `devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
@@ -72,9 +72,13 @@ date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_act
 
 `result` 只取三态：target / stop / time。未执行（未下单）与 gap（推送中断未收到）不写 result，分别单独计数，均不进 N。
 
+`exit_reason` 记原始了结原因：stop / target / cancel。cancel 表示被执行后被取代或区域失效，按取消时 mark 价（`exitPrice`，即最后一根 5m 收盘）计入，result 记 time，notes 注明 cancel；未了结留空。
+
+`bars_held` = (closedTs − sigTs) / 300，取整根 5m；未了结留空。复议主口径仍用日志 R；仅需与回测对照 R 重算时才用这一列，不作主口径。
+
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
 - regime 回算：不建归档表。取窗 = 信号时点前 180 天 + 200 根 1h 预热（ATR200）；1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页），复用回测的 ATR 算法与三分位切点；统一 UTC（sigTs 为 UTC 秒）。复议前用现有 21 条历史信号试跑一次。回算脚本两个断言：① 时基对齐——预热 200 根连续无缺口，末根开盘 = floor(sigTs/3600)×3600，ATR200 非 NaN；② 分位自洽——切点 b1 < b2，21 条标签全部落在 low/mid/high，且与回测同一分位定义。
-- 对账键：优先 `battleSignals._id`；人工回连用 `gate|symbol|sigTs`。sigTs 统一记 UTC 5m 开盘时间（ISO，如 `2026-10-15T05:30:00Z`）；库里存秒，看盘页显示本地时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
+- 对账键：`gate|symbol|sigTs` 为唯一主键；`battleSignals._id` 降为辅助，仅用于数据库/CLI 排查。sigTs 格式写死为 UTC 5m 开盘 ISO，如 `2026-10-15T05:30:00Z`；库里存秒，看盘页显示本地时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
 - 三计数分开：信号发出数（battleSignals）、实盘执行数（日志行）、已了结数（result 非空）；N 只用「执行且已了结」。
 - 推送失败率：按月统计失败数/发送数（发送数取 battleSignals 数），失败写入 `battlePushFailures`（ts / symbol / reason）；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，gap 期信号数单独记；窗口时长 = 日历时间 − gap 期时长；恢复后从下一条可对账信号重新起算。每周一 01:00 UTC 自动审计（`auditPushFailures`，查询 `pushFailureStats`），仅命中阈值时推一条监控消息，暂停决策仍人工。失败记录 ts 用毫秒（`Date.now`）；合成记录标 `synthetic=true`，默认统计排除，阳性测试用 `includeSynthetic=true`（已用 2 条合成失败验证 breach=true，默认审计仍 false）。
 
