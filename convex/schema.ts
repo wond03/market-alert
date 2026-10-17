@@ -76,5 +76,12 @@ export default defineSchema({
    confirmedTs: v.optional(v.union(v.number(), v.null())), // 入场（信号）时间
    invalidTs: v.optional(v.union(v.number(), v.null())), // 失效时间
    updatedAt: v.number(),
- }).index("by_fp", ["fp"]).index("by_ts", ["zoneStartT"]),
+  }).index("by_fp", ["fp"]).index("by_ts", ["zoneStartT"]),
+
+  // 猎场告警：推送失败记录（按月统计失败率，只记失败，不记成功）
+  battlePushFailures: defineTable({
+    symbol: v.string(),
+    ts: v.number(),
+    reason: v.string(),
+  }).index("by_ts", ["ts"]),
 });

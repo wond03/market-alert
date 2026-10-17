@@ -211,7 +211,19 @@ const prev = {
           signals: [{ exchange: EXCHANGE, symbol, createdAt: now, ...res.signal }],
         });
         openSignalId = ids.length ? ids[0] : null;
-        await sendTelegram(res.signal.text);
+        let pushFail: string | null = null;
+        try {
+          pushFail = await sendTelegram(res.signal.text);
+        } catch (e) {
+          pushFail = `exception: ${String(e)}`.slice(0, 160);
+        }
+        if (pushFail) {
+          await ctx.runMutation(internal.battle.recordPushFailure, {
+            symbol,
+            ts: now,
+            reason: pushFail,
+          });
+        }
         fired++;
       }
 
@@ -300,6 +312,13 @@ export const insertSignals = internalMutation({
     const ids = [];
     for (const s of signals) ids.push(await ctx.db.insert("battleSignals", s));
     return ids;
+  },
+});
+
+export const recordPushFailure = internalMutation({
+  args: { symbol: v.string(), ts: v.number(), reason: v.string() },
+  handler: async (ctx, { symbol, ts, reason }) => {
+    await ctx.db.insert("battlePushFailures", { symbol, ts, reason });
   },
 });
 

@@ -66,10 +66,17 @@ date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_act
 
 `devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
 
+`R` 按实际成交计算：long = (exit_actual − entry_actual) / |entry_actual − sl|；short = (entry_actual − exit_actual) / |entry_actual − sl|；再扣双边 taker 0.001 × entry_actual / |entry_actual − sl|。方向调整只作用于价格差，分母用实际入场到信号止损的距离，与回测 0.1% 双边同口径。
+
+分母保护：|entry_actual − sl| ≤ 0（含入场价已越过止损）时 R 与 devR 记空，result 照实记录，notes 标「口径异常」，该笔不进均值与标准差。
+
+`result` 只取三态：target / stop / time。未执行（未下单）与 gap（推送中断未收到）不写 result，分别单独计数，均不进 N。
+
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
+- regime 回算：不建归档表。1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页，180 天约 4320 根、3 页），与回测同一取数口径；复议前补一个回算脚本。
 - 对账键：优先 `battleSignals._id`；人工回连用 `gate|symbol|sigTs`。sigTs 是 5m 开盘时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
 - 三计数分开：信号发出数（battleSignals）、实盘执行数（日志行）、已了结数（result 非空）；N 只用「执行且已了结」。
-- 推送失败率：按月统计失败数/发送数；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，gap 期信号数单独记；窗口时长 = 日历时间 − gap 期时长；恢复后从下一条可对账信号重新起算。
+- 推送失败率：按月统计失败数/发送数（发送数取 battleSignals 数），失败写入 `battlePushFailures`（ts / symbol / reason）；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，gap 期信号数单独记；窗口时长 = 日历时间 − gap 期时长；恢复后从下一条可对账信号重新起算。
 
 复议标注规则：
 
