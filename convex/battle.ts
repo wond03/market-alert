@@ -34,7 +34,7 @@ function resolveSignal(
   target: number | null,
 ): Resolution | null {
   for (const c of ltf) {
-    if (c.t < fromTs) continue;
+    if (c.t < fromTs + LTF.sec) continue;
     if (dir === "short") {
       if (stop != null && c.c >= stop) return { result: "stop", ts: c.t, price: stop };
       if (target != null && c.l <= target) return { result: "target", ts: c.t, price: target };
