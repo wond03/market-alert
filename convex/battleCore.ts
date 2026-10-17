@@ -49,7 +49,9 @@ export type BattleState = {
 export type BattleEvalOpts = {
   zoneWindowSec?: number; // 覆盖 ZONE_WINDOW_SEC
   confirmSpanMax?: number; // 覆盖 CONFIRM_SPAN_MAX
-  obMitigation?: "wick" | "close"; // OB 缓解判定，默认 close（收盘确认，避免扫荡 K 自我抵消）
+  obMitigation?: "wick"|"close"; // OB 缓解判定，默认 close（收盘确认，避免扫荡 K 自我抵消）
+  preAnchorBars?: number; // 回测实验：无窗口内确认1时，允许用入区前 N 根 15m 的同向内部突破作锚点
+  exhaustAtr?: number; // 上述锚点的衰竭过滤：|入区价 − 锚点结构位| ≤ N×ATR200(15m)
 };
 
 export type Zone = {
@@ -121,7 +123,7 @@ function firstLtfIdxClosingAtOrAfter(ltf: Candle[], tClose: number): number {
   return -1;
 }
 export type C1 = { i: number; tag: string };
-export type C2 = { i: number; label: string };
+export type C2 = { i: number; label: string; kind: string };
 // 确认1：窗口内出现的 15m 内部结构同向突破（映射到其被确认后的 5m K 索引）。
 export function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C1[] {
   const out: C1[] = [];
@@ -134,6 +136,32 @@ export function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT
   }
   return out;
 }
+// 回测实验：把入区前的同向 15m 内部突破当作确认1锚点（索引取入区前一根 5m，使配对待确认2按入区后计时）。
+export function preAnchorC1(
+  mtf: Candle[],
+  ltf: Candle[],
+  bias: Bias,
+  startT: number,
+  entry: number,
+  lookBars: number,
+  atrMult: number,
+): C1 | null {
+  if (lookBars <= 0) return null;
+  let best: StructBreak | null = null;
+  for (const b of runStructure(mtf, INTERNAL_LEN).breaks) {
+    if (b.dir !== bias) continue;
+    const bc = b.t + MTF.sec;
+    if (bc > startT || bc <= startT - lookBars * MTF.sec) continue;
+    if (!best || b.t > best.t) best = b;
+  }
+  if (!best) return null;
+  let mi = mtf.length - 1;
+  while (mi > 0 && mtf[mi].t + MTF.sec > startT) mi--;
+  const a = atr(mtf, ATR_LEN)[mi];
+  if (!(a > 0) || Math.abs(entry - best.level) > atrMult * a) return null;
+  const i0 = firstLtfIdxClosingAtOrAfter(ltf, startT);
+  return i0 > 0 ? { i: i0 - 1, tag: best.tag } : null;
+}
 // 确认2：窗口内出现的 5m 同向触发（内部突破 / 吞没 / Pin Bar）。
 export function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C2[] {
   const breaks = runStructure(ltf, INTERNAL_LEN).breaks;
@@ -144,11 +172,11 @@ export function confirm2Indices(ltf: Candle[], bias: Bias, startT: number, lastC
     if (closeT <= startT || closeT > lastCloseT) continue;
     const b = breaks.find((x) => x.idx === i && x.dir === bias);
     if (b) {
-      out.push({ i, label: `${b.tag} ${dirWord} 破 ${gate.fmtPrice(b.level)}` });
+      out.push({ i, label: `${b.tag} ${dirWord} 破 ${gate.fmtPrice(b.level)}`, kind: b.tag });
     } else if (i > 0 && isEngulf(ltf[i - 1], ltf[i], bias)) {
-      out.push({ i, label: "吞没" });
+      out.push({ i, label: "吞没", kind: "吞没" });
     } else if (isPin(ltf[i], bias)) {
-      out.push({ i, label: "Pin Bar" });
+      out.push({ i, label: "Pin Bar", kind: "Pin" });
     }
   }
   return out;
@@ -164,6 +192,17 @@ export function closestPair(c1: C1[], c2: C2[], maxSpan: number): { confirm: str
         bestD = d;
         best = { confirm: b.label, confirmInternal: a.tag === "CHoCH" ? "CHoCH" : "BOS" };
       }
+    }
+  }
+  return best;
+}
+
+function minGap(c1: C1[], c2: C2[]): number | null {
+  let best: number | null = null;
+  for (const a of c1) {
+    for (const b of c2) {
+      const d = a.i - b.i;
+      if (best === null || Math.abs(d) < Math.abs(best)) best = d;
     }
   }
   return best;
@@ -419,6 +458,12 @@ export type FunnelInfo = {
   c1T: number | null;
   c2T: number | null;
   confirmed: boolean;
+  pair?: boolean;
+  tradable?: boolean;
+  gap?: number | null;
+  c1n?: number;
+  c2n?: number;
+  c2Kind?: string | null;
 };
 
 export type BattleEval = {
@@ -520,23 +565,32 @@ export function evaluateBattle(
   // 窗口内：确认1（15m 内部同向突破）与确认2（5m 触发）事件所在的 5m K 索引。
   const c1 = confirm1Indices(mtf, ltf, bias, startT, lastCloseT);
   const c2 = confirm2Indices(ltf, bias, startT, lastCloseT);
+  if (opts.preAnchorBars && !c1.length) {
+    const i0 = firstLtfIdxClosingAtOrAfter(ltf, startT);
+    const entryPx = i0 >= 0 ? ltf[i0].c : price;
+    const pa = preAnchorC1(mtf, ltf, bias, startT, entryPx, opts.preAnchorBars, opts.exhaustAtr ?? 1.5);
+    if (pa) c1.push(pa);
+  }
   const pair = closestPair(c1, c2, opts.confirmSpanMax ?? CONFIRM_SPAN_MAX);
   const c1T = c1.length ? ltf[c1[0].i]?.t ?? null : null;
   const c2T = c2.length ? ltf[c2[0].i]?.t ?? null : null;
-  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: false };
+  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: false, pair: pair !== null, gap: pair ? null : minGap(c1, c2), c1n: c1.length, c2n: c2.length, c2Kind: c2[0]?.kind ?? null };
   if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   // 当天去重：同一区域只推一次。
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
-  if (risk.target === null) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+  if (risk.target === null) {
+    funnel = { ...funnel, tradable: false };
+    return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+  }
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : z.top;
   const bgOk = bg === "bull" || bg === "bear";
   const bgTag = bgOk && htfLast ? htfLast.tag : "";
  const bgLevel = bgOk && htfLast ? htfLast.level : 0;
- funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: true };
+  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: true, pair: true, tradable: true };
  return {
  bias,
  firedZone: zoneKey,
