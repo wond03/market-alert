@@ -73,10 +73,10 @@ date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_act
 `result` 只取三态：target / stop / time。未执行（未下单）与 gap（推送中断未收到）不写 result，分别单独计数，均不进 N。
 
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
-- regime 回算：不建归档表。1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页，180 天约 4320 根、3 页），与回测同一取数口径；复议前补一个回算脚本。
+- regime 回算：不建归档表。取窗 = 信号时点前 180 天 + 200 根 1h 预热（ATR200）；1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页），复用回测的 ATR 算法与三分位切点；统一 UTC（sigTs 为 UTC 秒）。复议前用现有 21 条历史信号试跑一次，核对分位标签与时点自洽。
 - 对账键：优先 `battleSignals._id`；人工回连用 `gate|symbol|sigTs`。sigTs 是 5m 开盘时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
 - 三计数分开：信号发出数（battleSignals）、实盘执行数（日志行）、已了结数（result 非空）；N 只用「执行且已了结」。
-- 推送失败率：按月统计失败数/发送数（发送数取 battleSignals 数），失败写入 `battlePushFailures`（ts / symbol / reason）；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，gap 期信号数单独记；窗口时长 = 日历时间 − gap 期时长；恢复后从下一条可对账信号重新起算。
+- 推送失败率：按月统计失败数/发送数（发送数取 battleSignals 数），失败写入 `battlePushFailures`（ts / symbol / reason）；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，gap 期信号数单独记；窗口时长 = 日历时间 − gap 期时长；恢复后从下一条可对账信号重新起算。每周一 01:00 UTC 自动审计（`auditPushFailures`，查询 `pushFailureStats`），仅命中阈值时推一条监控消息，暂停决策仍人工。
 
 复议标注规则：
 

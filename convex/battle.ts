@@ -322,6 +322,74 @@ export const recordPushFailure = internalMutation({
   },
 });
 
+function monthKeyUtc(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+type PushFailureStat = { month: string; failures: number; signals: number };
+
+// 推送失败按月汇总；发送数取 battleSignals 数（每次信号一条告警）。
+export const pushFailureStats = internalQuery({
+  args: { since: v.number() },
+  handler: async (ctx, { since }): Promise<PushFailureStat[]> => {
+    const fails = await ctx.db
+      .query("battlePushFailures")
+      .withIndex("by_ts", (q) => q.gte("ts", since))
+      .collect();
+    const signals = await ctx.db
+      .query("battleSignals")
+      .withIndex("by_sigTs", (q) => q.gte("sigTs", Math.floor(since / 1000)))
+      .collect();
+    const byMonth = new Map<string, { month: string; failures: number; signals: number }>();
+    const rowOf = (k: string) => {
+      const row = byMonth.get(k) ?? { month: k, failures: 0, signals: 0 };
+      byMonth.set(k, row);
+      return row;
+    };
+    for (const f of fails) rowOf(monthKeyUtc(f.ts)).failures++;
+    for (const s of signals) rowOf(monthKeyUtc(s.sigTs * 1000)).signals++;
+    return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
+  },
+});
+
+// 每周审计：命中阈值才推一条监控消息；暂停与否仍人工决策。
+export const auditPushFailures = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ breach: boolean; month: PushFailureStat; week: { failures: number; signals: number } }> => {
+    const now = Date.now();
+    const d = new Date(now);
+    const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    const weekStart = now - 7 * 86400_000;
+    const monthRows = await ctx.runQuery(internal.battle.pushFailureStats, {
+      since: monthStart,
+    });
+    const weekRows = await ctx.runQuery(internal.battle.pushFailureStats, {
+      since: weekStart,
+    });
+    const month = monthRows.find((r) => r.month === monthKeyUtc(now)) ?? {
+      month: monthKeyUtc(now),
+      failures: 0,
+      signals: 0,
+    };
+    const week = weekRows.reduce<{ failures: number; signals: number }>(
+      (a, r) => ({ failures: a.failures + r.failures, signals: a.signals + r.signals }),
+      { failures: 0, signals: 0 },
+    );
+    const monthRate = month.signals > 0 ? month.failures / month.signals : 0;
+    const breach = monthRate > 0.05 || week.failures >= 2;
+    if (!breach) return { breach: false, month, week };
+    const text =
+      "<b>[监控] 猎场推送失败率</b>\n" +
+      `本月 ${month.failures}/${month.signals}（${(monthRate * 100).toFixed(1)}%）\n` +
+      `近 7 天 ${week.failures}/${week.signals}\n` +
+      "暂停计入窗口的决策仍需人工。";
+    const fail = await sendTelegram(text);
+    if (fail) console.warn(`push failure audit notify failed: ${fail}`);
+    return { breach: true, month, week };
+  },
+});
+
 // 了结结果回填到信号记录（扫止损 / 到止盈 / 被取代）。
 export const closeSignal = internalMutation({
   args: {
