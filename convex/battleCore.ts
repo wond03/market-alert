@@ -404,7 +404,7 @@ export function sizeNoteOf(symbol: string, confirmInternal: string, swept: boole
   const per = px * BTC_QUANTO;
   const qty = Math.max(1, Math.floor(target / per));
   const notional = qty * per;
-  return `子组　BTC · sweep=N · BOS　仓位 <b>${qty} 张</b>（名义 ${notional.toFixed(2)}U · 保证金 ${(notional / SIZE_LEVERAGE).toFixed(2)}U）\n`;
+  return `子组　BTC · sweep=N · BOS　仓位 <b>${qty} 张</b>（参考价 ${gate.fmtPrice(px)} · 名义 ${notional.toFixed(2)}U · 保证金 ${(notional / SIZE_LEVERAGE).toFixed(2)}U）\n`;
 }
 
 export function buildMessage(
@@ -650,7 +650,7 @@ export function evaluateBattle(
         sweep.swept,
         sweep.level,
         now,
-        sizeNoteOf(symbol, pair.confirmInternal, sweep.swept, price),
+        sizeNoteOf(symbol, pair.confirmInternal, sweep.swept, risk.entry),
       ),
     },
   };
