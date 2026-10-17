@@ -179,6 +179,7 @@ export function runStructure(
   candles: Candle[],
   size: number,
   obFilter: "atr" | "range" = "atr",
+  mitigation: "wick" | "close" = "wick",
 ): StructureResult {
   const n = candles.length;
   const highs: Pivot[] = [];
@@ -258,7 +259,15 @@ export function runStructure(
   // 订单块被缓解的时间：看涨 OB 当 low < OB.low；看跌 OB 当 high > OB.high
   for (const ob of orderBlocks) {
     for (let k = ob.idx + 1; k < n; k++) {
-      if (ob.bias === "bull" ? candles[k].l < ob.low : candles[k].h > ob.high) {
+      const breached =
+        mitigation === "close"
+          ? ob.bias === "bull"
+            ? candles[k].c < ob.low
+            : candles[k].c > ob.high
+          : ob.bias === "bull"
+            ? candles[k].l < ob.low
+            : candles[k].h > ob.high;
+      if (breached) {
         ob.mitigatedIdx = k;
         ob.mitigatedT = candles[k].t;
         break;

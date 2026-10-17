@@ -49,6 +49,7 @@ export type BattleState = {
 export type BattleEvalOpts = {
   zoneWindowSec?: number; // 覆盖 ZONE_WINDOW_SEC
   confirmSpanMax?: number; // 覆盖 CONFIRM_SPAN_MAX
+  obMitigation?: "wick" | "close"; // OB 缓解判定，默认 close（收盘确认，避免扫荡 K 自我抵消）
 };
 
 export type Zone = {
@@ -168,8 +169,12 @@ export function closestPair(c1: C1[], c2: C2[], maxSpan: number): { confirm: str
   return best;
 }
 
-export function battleZones(candles: Candle[], bias: Bias): Zone[] {
-  const swing = runStructure(candles, SWING_LEN);
+export function battleZones(
+  candles: Candle[],
+  bias: Bias,
+  obMitigation: "wick" | "close" = "close",
+): Zone[] {
+  const swing = runStructure(candles, SWING_LEN, "atr", obMitigation);
   const atrArr = atr(candles, ATR_LEN);
   const zones: Zone[] = [];
   for (const o of swing.orderBlocks) {
@@ -498,7 +503,7 @@ export function evaluateBattle(
   if (!zoneKey) {
     const buf = ZONE_BUF_ATR * ltfAtr;
     let inZone: Zone | null = null;
-    for (const z of battleZones(mtf, bias)) {
+    for (const z of battleZones(mtf, bias, opts.obMitigation ?? "close")) {
       if (price >= z.bottom - buf && price <= z.top + buf) {
         if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
       }
@@ -525,6 +530,7 @@ export function evaluateBattle(
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
+  if (risk.target === null) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : z.top;
   const bgOk = bg === "bull" || bg === "bear";

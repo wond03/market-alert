@@ -18,13 +18,10 @@ const FIVE_M = 9000;
 const FIFT_M = 3000;
 const ONE_H = 900;
 
-type Cfg = { windowSec: number; span: number; label: string };
+type Cfg = { windowSec: number; span: number; ob: "wick" | "close"; label: string };
 const CONFIGS: Cfg[] = [
-  { windowSec: 12 * 900, span: 6, label: "窗口12×15m span6" },
-  { windowSec: 8 * 900, span: 6, label: "窗口8×15m span6" },
-  { windowSec: 24 * 900, span: 6, label: "窗口24×15m span6" },
-  { windowSec: 12 * 900, span: 3, label: "窗口12×15m span3" },
-  { windowSec: 12 * 900, span: 9, label: "窗口12×15m span9" },
+  { windowSec: 24 * 900, span: 6, ob: "wick", label: "OB缓解=烛芯(现状)" },
+  { windowSec: 24 * 900, span: 6, ob: "close", label: "OB缓解=收盘" },
 ];
 
 type Rec = {
@@ -32,6 +29,7 @@ type Rec = {
   cfg: string;
   ts: number;
   bias: "long" | "short";
+  sweep: boolean;
   entry: number;
   stop: number;
   target: number | null;
@@ -99,9 +97,10 @@ async function runSymbol(sym: string): Promise<Rec[]> {
 
     for (const cfg of CONFIGS) {
       const res = evaluateBattle(htf, mtf, ltf, states[cfg.label], tClose, "gate", sym, {
-        zoneWindowSec: cfg.windowSec,
-        confirmSpanMax: cfg.span,
-      });
+      zoneWindowSec: cfg.windowSec,
+      confirmSpanMax: cfg.span,
+      obMitigation: cfg.ob,
+    });
       states[cfg.label] = { firedZone: res.firedZone, zoneKey: res.zoneKey, zoneStartT: res.zoneStartT };
       const sig = res.signal;
       if (!sig) continue;
@@ -115,9 +114,10 @@ async function runSymbol(sym: string): Promise<Rec[]> {
       recs.push({
         sym,
         cfg: cfg.label,
-        ts: sig.sigTs,
-        bias: sig.bias,
-        entry: sig.entryPrice,
+  ts: sig.sigTs,
+  bias: sig.bias,
+  sweep: sig.sweep,
+  entry: sig.entryPrice,
         stop: sig.stopPrice,
         target: sig.targetPrice,
         rr: sig.rr,
@@ -139,6 +139,43 @@ function summarize(recs: Rec[]) {
   const sumGross = recs.reduce((a, r) => a + r.rGross, 0);
   const decided = wins + losses;
   return { n, wins, losses, time, winRate: decided ? wins / decided : NaN, avgNet: n ? sumNet / n : NaN, avgGross: n ? sumGross / n : NaN, sumNet, sumGross };
+}
+
+function printRow(label: string, s: ReturnType<typeof summarize>) {
+  console.log(
+    padE(label, 34) +
+      pad(String(s.n), 5) +
+      pad(String(s.wins), 5) +
+      pad(String(s.losses), 5) +
+      pad(String(s.time), 5) +
+      pad(isFinite(s.winRate) ? (s.winRate * 100).toFixed(0) + "%" : "-", 7) +
+      pad(f(s.avgNet), 9) +
+      pad(f(s.sumNet), 9),
+  );
+}
+
+function extraStats(all: Rec[]) {
+  console.log("\n=== sweep 归因（sweep 为纯标记，未参与拦截） ===");
+  console.log(padE("group", 34) + pad("N", 5) + pad("win", 5) + pad("loss", 5) + pad("time", 5) + pad("win%", 7) + pad("avgRnet", 9) + pad("sumRnet", 9));
+  for (const cfg of CONFIGS) {
+    for (const sw of [true, false]) {
+      printRow(`${cfg.label} · sweep=${sw ? "Y" : "N"}`, summarize(all.filter((r) => r.cfg === cfg.label && r.sweep === sw)));
+    }
+  }
+
+  console.log("\n=== 软下限：TP 退回最近位（rr<2） ===");
+  console.log(padE("group", 34) + pad("N", 5) + pad("win", 5) + pad("loss", 5) + pad("time", 5) + pad("win%", 7) + pad("avgRnet", 9) + pad("sumRnet", 9));
+  for (const cfg of CONFIGS) {
+    const rs = all.filter((r) => r.cfg === cfg.label);
+    const fb = rs.filter((r) => r.rr != null && r.rr < 2);
+    const strict = rs.filter((r) => r.rr != null && r.rr >= 2);
+    const noTp = rs.filter((r) => r.rr == null);
+    printRow(`${cfg.label} · rr<2 回退`, summarize(fb));
+    printRow(`${cfg.label} · rr>=2`, summarize(strict));
+    printRow(`${cfg.label} · 无TP`, summarize(noTp));
+    const dist = fb.map((r) => r.rr as number).sort((a, b) => a - b);
+    if (dist.length) console.log(`  回退 rr 分布: ${dist.map((x) => x.toFixed(2)).join(" ")}`);
+  }
 }
 
 async function main() {
@@ -170,6 +207,8 @@ async function main() {
         pad(f(s.sumNet), 9),
     );
   }
+
+  extraStats(all);
 
   console.log("\n=== 明细 ===");
   console.log(padE("sym", 5) + padE("cfg", 20) + padE("time", 16) + padE("bias", 6) + pad("rr", 6) + pad("Rnet", 7) + padE(" why", 7));
