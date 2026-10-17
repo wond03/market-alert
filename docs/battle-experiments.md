@@ -67,9 +67,9 @@ date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_act
 `devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
 
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
-- 对账键：`gate|symbol|sigTs`，每行必须能回连 `battleSignals` 的一条记录。
+- 对账键：优先 `battleSignals._id`；人工回连用 `gate|symbol|sigTs`。sigTs 是 5m 开盘时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
 - 三计数分开：信号发出数（battleSignals）、实盘执行数（日志行）、已了结数（result 非空）；N 只用「执行且已了结」。
-- 推送失败率：按月统计失败数/发送数；单月 >5% 或连续 2 次失败，暂停窗口并排查。
+- 推送失败率：按月统计失败数/发送数；单月 >5% 或连续 2 次失败，暂停的是复议窗口的样本计入与计时，扫描和推送继续；缺口期间信号标记 gap 不计入 N，恢复后从下一条可对账信号重新起算。
 
 复议标注规则：
 
@@ -81,6 +81,7 @@ date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_act
 ## 实盘计时与录入
 
 - 计时起点：2026-10-17 22:57 UTC（北京 2026-10-18 06:57），部署完成时间；不从第一条告警起算。
+- 部署间空档核对：截至 2026-10-17，`battleSignals` 共 21 条，最新 2026-10-15 05:35 UTC；两次部署（22:57Z / 23:06Z）之间无新增。
 - 张数口径：固定名义优先。qty = max(1, floor(375 / (px × 0.0001)))，notional = qty × px × 0.0001，保证金 = notional / 100；价格变化只改张数，名义目标保持 375U。下限为 1 张：极端价格下 375U 不足 1 张名义时仍取 1 张，实际名义会高于 375U。
 - 首条告警人工核对：张数 = floor(375 / (px × 0.0001))，保证金按实际张数折算，子组标签与 SL/TP 齐全（buildMessage 已输出止损与止盈；无 TP 不开仓，target 必不为空）；核对结果记入 notes。
 - 录入人：wond03（唯一执行人）；换人时先更新此条目。断档处理：责任人缺位时暂停执行并标注「断档」，不得无主录入；事后补录须在 notes 注明补录时间。
