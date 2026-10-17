@@ -61,10 +61,15 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 最小两列：建议数量、实际数量。CSV 列：
 
 ```text
-date,symbol,subgroup,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,owner,notes
+date,symbol,subgroup,sigTs,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,owner,notes
 ```
 
 `devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
+
+- 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
+- 对账键：`gate|symbol|sigTs`，每行必须能回连 `battleSignals` 的一条记录。
+- 三计数分开：信号发出数（battleSignals）、实盘执行数（日志行）、已了结数（result 非空）；N 只用「执行且已了结」。
+- 推送失败率：按月统计失败数/发送数；单月 >5% 或连续 2 次失败，暂停窗口并排查。
 
 复议标注规则：
 
