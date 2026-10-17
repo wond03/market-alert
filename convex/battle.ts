@@ -23,7 +23,7 @@ function env(name: string): string {
   return value ? String(value).trim() : "";
 }
 
-// 信号了结判定：按时间顺序逐根，先触及止损（收盘穿过）或止盈（影线触及）者即判定了结。
+// 信号了结判定：按时间顺序逐根，止损/止盈均按影线触及，先到者了结（同根先判止损）。
 type Resolution = { result: "stop" | "target"; ts: number; price: number };
 
 function resolveSignal(
@@ -36,10 +36,10 @@ function resolveSignal(
   for (const c of ltf) {
     if (c.t < fromTs + LTF.sec) continue;
     if (dir === "short") {
-      if (stop != null && c.c >= stop) return { result: "stop", ts: c.t, price: stop };
+      if (stop != null && c.h >= stop) return { result: "stop", ts: c.t, price: stop };
       if (target != null && c.l <= target) return { result: "target", ts: c.t, price: target };
     } else {
-      if (stop != null && c.c <= stop) return { result: "stop", ts: c.t, price: stop };
+      if (stop != null && c.l <= stop) return { result: "stop", ts: c.t, price: stop };
       if (target != null && c.h >= target) return { result: "target", ts: c.t, price: target };
     }
   }
@@ -102,7 +102,7 @@ export const scan = internalAction({
       let openTs = state?.openTs ?? null;
       let openSignalId = state?.openSignalId ?? null;
 
-      // 了结检查：收盘穿过止损或触及止盈 → 写入记录并解除。
+      // 了结检查：影线触及止损或止盈 → 写入记录并解除。
       if (openTs != null && openDir) {
         const r = resolveSignal(ltf, openTs, openDir, openStop, openTarget);
         if (r) {

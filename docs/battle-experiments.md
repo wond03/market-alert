@@ -78,6 +78,8 @@ sigTs 与 entry_ts 列固定 ISO UTC 5m 开盘，如 `2026-10-15T05:30:00Z`，�
 
 `bars_held` = (floor(closedTs/300) − sigTs) / 300，从信号 5m 开盘起算，与回测 FWD_BARS 同一起点；`wait_bars` = (floor(entry_ts/300) − sigTs) / 300 记录 signal→entry 等待，仅作对照说明。未了结两列留空。复议主口径仍用日志 R；仅需与回测对照 R 重算时才用这两列，不作主口径。
 
+了结口径：止损与止盈均按 5m 影线触及，同根先判止损；与回测一致（人工按交易所挂单执行，滑点不建模）。
+
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
 - regime 回算：不建归档表。取窗 = 信号时点前 180 天 + 200 根 1h 预热（ATR200）；1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页），复用回测的 ATR 算法与三分位切点；统一 UTC（sigTs 为 UTC 秒）。复议前用现有 21 条历史信号试跑一次。回算脚本两个断言：① 时基对齐——预热 200 根连续无缺口，末根开盘 = floor(sigTs/3600)×3600，ATR200 非 NaN；② 分位自洽——切点 b1 < b2，21 条标签全部落在 low/mid/high，且与回测同一分位定义。
 - 对账键：`gate|symbol|sigTs` 为唯一主键；`battleSignals._id` 降为辅助，仅用于数据库/CLI 排查。sigTs 格式写死为 UTC 5m 开盘 ISO，如 `2026-10-15T05:30:00Z`；库里存秒，看盘页显示本地时间，扫描每分钟一次但只用已收盘 K，同一标的同一 sigTs 最多一条；现有 21 条历史无重复。
