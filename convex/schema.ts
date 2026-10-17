@@ -83,5 +83,6 @@ export default defineSchema({
     symbol: v.string(),
     ts: v.number(),
     reason: v.string(),
+    synthetic: v.optional(v.boolean()),
   }).index("by_ts", ["ts"]),
 });

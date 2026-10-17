@@ -220,7 +220,7 @@ const prev = {
         if (pushFail) {
           await ctx.runMutation(internal.battle.recordPushFailure, {
             symbol,
-            ts: now,
+            ts: Date.now(),
             reason: pushFail,
           });
         }
@@ -316,9 +316,19 @@ export const insertSignals = internalMutation({
 });
 
 export const recordPushFailure = internalMutation({
-  args: { symbol: v.string(), ts: v.number(), reason: v.string() },
-  handler: async (ctx, { symbol, ts, reason }) => {
-    await ctx.db.insert("battlePushFailures", { symbol, ts, reason });
+  args: {
+    symbol: v.string(),
+    ts: v.number(),
+    reason: v.string(),
+    synthetic: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { symbol, ts, reason, synthetic }) => {
+    await ctx.db.insert("battlePushFailures", {
+      symbol,
+      ts,
+      reason,
+      synthetic: synthetic ?? false,
+    });
   },
 });
 
@@ -331,8 +341,8 @@ type PushFailureStat = { month: string; failures: number; signals: number };
 
 // 推送失败按月汇总；发送数取 battleSignals 数（每次信号一条告警）。
 export const pushFailureStats = internalQuery({
-  args: { since: v.number() },
-  handler: async (ctx, { since }): Promise<PushFailureStat[]> => {
+  args: { since: v.number(), includeSynthetic: v.optional(v.boolean()) },
+  handler: async (ctx, { since, includeSynthetic }): Promise<PushFailureStat[]> => {
     const fails = await ctx.db
       .query("battlePushFailures")
       .withIndex("by_ts", (q) => q.gte("ts", since))
@@ -347,7 +357,10 @@ export const pushFailureStats = internalQuery({
       byMonth.set(k, row);
       return row;
     };
-    for (const f of fails) rowOf(monthKeyUtc(f.ts)).failures++;
+    for (const f of fails) {
+      if (!includeSynthetic && f.synthetic) continue;
+      rowOf(monthKeyUtc(f.ts)).failures++;
+    }
     for (const s of signals) rowOf(monthKeyUtc(s.sigTs * 1000)).signals++;
     return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
   },
@@ -355,17 +368,19 @@ export const pushFailureStats = internalQuery({
 
 // 每周审计：命中阈值才推一条监控消息；暂停与否仍人工决策。
 export const auditPushFailures = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ breach: boolean; month: PushFailureStat; week: { failures: number; signals: number } }> => {
+  args: { includeSynthetic: v.optional(v.boolean()) },
+  handler: async (ctx, { includeSynthetic }): Promise<{ breach: boolean; month: PushFailureStat; week: { failures: number; signals: number } }> => {
     const now = Date.now();
     const d = new Date(now);
     const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
     const weekStart = now - 7 * 86400_000;
     const monthRows = await ctx.runQuery(internal.battle.pushFailureStats, {
       since: monthStart,
+      includeSynthetic,
     });
     const weekRows = await ctx.runQuery(internal.battle.pushFailureStats, {
       since: weekStart,
+      includeSynthetic,
     });
     const month = monthRows.find((r) => r.month === monthKeyUtc(now)) ?? {
       month: monthKeyUtc(now),
