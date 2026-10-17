@@ -60,6 +60,8 @@ function rrOf(
 
 const EXCHANGE: Exchange = "gate";
 const SYMBOLS = ["BTC", "XAU"];
+// 对齐 backtest/battle6m.ts 的 FWD_BARS：持有满 288 根 5m 未触及止损/止盈即按 time 了结。
+const TIMEOUT_BARS = 288;
 
 export const scan = internalAction({
   args: {},
@@ -135,6 +137,40 @@ export const scan = internalAction({
           openTarget = null;
           openTs = null;
           openSignalId = null;
+        } else {
+          const cutT = openTs + TIMEOUT_BARS * LTF.sec;
+          const last = ltf[ltf.length - 1];
+          if (last && last.t >= cutT) {
+            const cutBar = ltf.find((c) => c.t === cutT) ?? last;
+            await ctx.runMutation(internal.battle.insertOutcome, {
+              exchange: EXCHANGE,
+              symbol,
+              bias: openDir,
+              entryPrice: openEntry ?? openStop ?? cutBar.c,
+              stopPrice: openStop ?? cutBar.c,
+              targetPrice: openTarget,
+              rr: rrOf(openEntry, openStop, openTarget),
+              openedTs: openTs,
+              closedTs: cutBar.t,
+              result: "time",
+              exitPrice: cutBar.c,
+              createdAt: now,
+            });
+            if (openSignalId != null) {
+              await ctx.runMutation(internal.battle.closeSignal, {
+                id: openSignalId,
+                result: "time",
+                exitPrice: cutBar.c,
+                closedTs: cutBar.t,
+              });
+            }
+            openDir = null;
+            openEntry = null;
+            openStop = null;
+            openTarget = null;
+            openTs = null;
+            openSignalId = null;
+          }
         }
       }
 

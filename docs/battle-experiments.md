@@ -74,11 +74,13 @@ sigTs 与 entry_ts 列固定 ISO UTC 5m 开盘，如 `2026-10-15T05:30:00Z`，�
 
 `result` 只取三态：target / stop / time。未执行（未下单）与 gap（推送中断未收到）不写 result，分别单独计数，均不进 N。
 
-`exit_reason` 仅在 `result=time` 时填写（当前取 `cancel`）；`result=stop/target` 留空。cancel 表示被执行后被取代或区域失效，按取消时向前最近一根已收盘 5m 的收盘价计入（`ltf` 已剔除未收盘 K，非缓存值），result 记 time，notes 注明 cancel。cancel 计入 N；复议时按 exit_reason 拆分 time 退出（当前仅 cancel 一类），不与 stop 混算。
+`exit_reason` 仅在 `result=time` 时填写（`cancel` 或 `timeout`）；`result=stop/target` 留空。cancel 表示被执行后被取代或区域失效，按取消时向前最近一根已收盘 5m 的收盘价计入（`ltf` 已剔除未收盘 K，非缓存值），result 记 time，notes 注明 cancel。cancel 计入 N；复议时按 exit_reason 拆分 time 退出（cancel / timeout），不与 stop 混算。
 
 `bars_held` = (floor(closedTs/300) − sigTs) / 300，从信号 5m 开盘起算，与回测 FWD_BARS 同一起点；`wait_bars` = (floor(entry_ts/300) − sigTs) / 300 记录 signal→entry 等待，仅作对照说明。未了结两列留空。复议主口径仍用日志 R；仅需与回测对照 R 重算时才用这两列，不作主口径。
 
 了结口径：止损与止盈均按 5m 影线触及，同根先判止损；与回测一致（人工按交易所挂单执行，滑点不建模）。
+
+到期规则：持仓满 288 根 5m（对齐回测 FWD_BARS）仍未触及止损/止盈 → result=time、exit_reason=timeout，按第 288 根收盘了结，计入 N；扫描窗仍为 300 根。
 
 - 非子组：`qty_suggested` 填「—」，不套乘数、不补基准数量。
 - regime 回算：不建归档表。取窗 = 信号时点前 180 天 + 200 根 1h 预热（ATR200）；1h K 按 Binance futures klines 的 startTime/endTime 分页回取（1500 根/页），复用回测的 ATR 算法与三分位切点；统一 UTC（sigTs 为 UTC 秒）。复议前用现有 21 条历史信号试跑一次。回算脚本两个断言：① 时基对齐——预热 200 根连续无缺口，末根开盘 = floor(sigTs/3600)×3600，ATR200 非 NaN；② 分位自洽——切点 b1 < b2，21 条标签全部落在 low/mid/high，且与回测同一分位定义。
