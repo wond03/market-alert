@@ -25,8 +25,8 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 
 ## 0.75x 复议
 
-作用域：BTC × sweep=N × BOS，仅回测加权口径；生产未接入仓位乘数。
-可接入性：`battleSignals` 已存 `sweep` / `confirmInternal` / `sweepLevel`，`buildMessage` 已接收 `confirmInternal` 与 `sweepSwept`；告警链无下单通道。
+作用域：BTC × sweep=N × BOS，回测加权口径 + 告警执行提示；生产无下单通道。
+可接入性：`battleSignals` 已存 `sweep` / `confirmInternal` / `sweepLevel`；`buildMessage` 已接收 `confirmInternal` 与 `sweepSwept`，并由 `sizeNoteOf` 生成整数张提示；告警链无下单通道。
 定性：0.75x 为执行规则，形态是告警文案里的仓位提示（人工执行）；回测加权是同一口径的度量。
 窗口：自决策日起累计 15–20 笔已了结；不足 15 笔不判。
 指标：组内原始 sumR、胜率、0.75x 加权 sumR、Δ总Rnet。
@@ -43,7 +43,7 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 ## 0.75x 复议补充约定
 
 - 数据来源：回测为主，实盘日志为辅；两套分开统计，不混算。
-- 告警文案：给具体数量，不给比例。375U / 3.75U 是 2026-10-17 口径快照（本金 100U、每笔名义 500U、保证金 5U、100x）。实际下单按 Gate BTC_USDT 整数张换算：quanto 0.0001 BTC/张、最小 1 张；按 mark 81,365.6，375U≈46 张=374.28U，47 张=382.42U；价格变化时按发送时 mark 重算张数。
+- 告警文案：给具体数量，不给比例。375U / 3.74U 是 2026-10-17 口径快照（本金 100U、每笔名义 500U、保证金 5U、100x）。实际下单按 Gate BTC_USDT 整数张换算：quanto 0.0001 BTC/张、最小 1 张；按 mark 81,365.6，375U≈46 张=374.28U（保证金 3.74U），47 张=382.42U（保证金 3.82U）；价格变化时按发送时价格（最近 5m 收盘）重算张数。
 - 风险单位：信号止损距离 |entry − stop|，不随乘数变化；R 以该距离归一。
 - 重算顺序：先算原始 R，再乘 0.75；不从加权 R 反推原始 R。
 - 执行偏差：|实际入场 − 信号入场| / 信号止损距离 > 0.15R 时，复议推迟；偏差持续超标则按实际成交价重算原始 R，再乘 0.75。
@@ -54,4 +54,21 @@ BT_DAYS=182 BT_SPANS=6 node /tmp/btq.mjs
 - 频率与时间：6 个月 9 笔 ≈ 1.5 笔/月；到 N=15 约再 4 个月，到 N=20 约再 7 个月。窗口不会快速关闭，期间按下面两条观察。
 - regime 标签：每笔按信号时 1h ATR200 在近 180 天分布中的三分位打标（低/中/高）。复议时先比前 9 笔与新增样本的标签构成；主导档变化，或任一档占比偏移 ≥20pp，则按 regime 分表，不看总数。标签是各自时点的相对分位，180 天窗口随信号滚动、分界值会漂移；分表前先比前后分界值，差异大时按更保守方向解读。
 - 子组活跃度：连续 3 个自然月 0 笔 BTC N BOS，记一笔「子组停产」，作为 sweep/扳机在当前波动下系统性不触发的旁证；不改代码，复议时单独列出，不把零信号当作质量稳定。
-- 复议顺序：先算执行偏差，>0.15R 先推迟或重算，再进四情形决策树。
+- 复议顺序：先算执行偏差，>0.15R 先推迟或重算，再进四情形决策树；风险指标仅作辅助。
+
+## 实盘日志格式
+
+最小两列：建议数量、实际数量。CSV 列：
+
+```text
+date,symbol,subgroup,entry_signal,sl,tp,qty_suggested,qty_actual,entry_actual,exit_actual,result,devR,regime,notes
+```
+
+`devR` 按方向计算：long = (entry_actual − entry_signal) / |entry_signal − sl|；short = (entry_signal − entry_actual) / |entry_signal − sl|；正值表示成交更差。
+
+复议标注规则：
+
+- 风险指标（maxDD / avgRnet）只作辅助，不单独作为维持或取消依据。
+- N < 20，或胜率距 50% 不足 10pp，结论标注「待复核」。
+- avgRnet < 1.0R，标注「成本敏感」，提示 taker、滑点、资金费未完全计入。
+- N ≥ 30 复核与成本口径调整排在复议之后，不现在做。

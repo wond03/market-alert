@@ -34,6 +34,10 @@ export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
 export const DISP_MULT = 1.5; // 位移 K 线：范围 ≥ N×ATR（且方向与区域一致）
 export const SWEEP_LOOKBACK = 20; // 扫荡检测回看根数（HTF）
 export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的最近对手流动性
+const SIZE_BASE_NOTIONAL = 500; // 报表口径：每笔名义 USDT
+const SIZE_MULT = 0.75; // BTC × sweep=N × BOS 折价
+const SIZE_LEVERAGE = 100; // 报表口径：杠杆
+const BTC_QUANTO = 0.0001; // Gate BTC_USDT 每张 BTC 数量
 
 export type Bias = "bull" | "bear";
 
@@ -393,6 +397,16 @@ export function buildRisk(
   return { entry, stop, target, rr, stopPct: riskUnit / price };
 }
 
+// BTC × sweep=N × BOS 的执行提示：按基准名义 × 0.75，换算成整数张（Gate BTC_USDT）。
+export function sizeNoteOf(symbol: string, confirmInternal: string, swept: boolean, px: number): string {
+  if (symbol !== "BTC" || swept || confirmInternal !== "BOS" || !(px > 0)) return "";
+  const target = SIZE_BASE_NOTIONAL * SIZE_MULT;
+  const per = px * BTC_QUANTO;
+  const qty = Math.max(1, Math.floor(target / per));
+  const notional = qty * per;
+  return `子组　BTC · sweep=N · BOS　仓位 <b>${qty} 张</b>（名义 ${notional.toFixed(2)}U · 保证金 ${(notional / SIZE_LEVERAGE).toFixed(2)}U）\n`;
+}
+
 export function buildMessage(
   exchange: string,
   symbol: string,
@@ -413,6 +427,7 @@ export function buildMessage(
   sweepSwept: boolean,
   sweepLevel: number | null,
   now: number,
+  sizeNote = "",
 ): string {
   const dirCn = bias === "bull" ? "看涨" : "看跌";
   const dirWord = bias === "bull" ? "向上" : "向下";
@@ -440,6 +455,7 @@ export function buildMessage(
     `确认 ${LTF.tf}　<b>${confirm}</b>\n` +
     `${sep}\n` +
     `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
+    sizeNote +
     `止损 <b>${gate.fmtPrice(stop)}</b>（${(stopPct * 100).toFixed(2)}%）\n` +
     (target === null
       ? ``
@@ -634,6 +650,7 @@ export function evaluateBattle(
         sweep.swept,
         sweep.level,
         now,
+        sizeNoteOf(symbol, pair.confirmInternal, sweep.swept, price),
       ),
     },
   };
