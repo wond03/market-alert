@@ -156,7 +156,9 @@ const prev = {
   zoneKey: state?.zoneKey ?? "",
   zoneStartT: state?.zoneStartT ?? null,
 };
- const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol);
+ const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol, {
+  zoneInvalidateMtf: true,
+ });
 
  // 漏斗：活动区域推进到哪一层，落库（每层只记一次）。
  if (res.funnel) {

@@ -1,3 +1,5 @@
+import fsSync from "node:fs";
+import fsSync from "node:fs";
 import { battleZones, evaluateBattle, type BattleState } from "../convex/battleCore";
 import { INTERNAL_LEN, runStructure } from "../convex/luxSmc";
 
@@ -14,6 +16,7 @@ const COST_ROUNDTRIP = 0.0010;
 const BJ = 8 * 3600;
 const SPANS = (process.env.BT_SPANS ?? "6,12").split(",").map(Number);
 const PRE_C = process.env.BT_C === "1";
+const ZW = Number(process.env.BT_ZW ?? 0);
 const STEP: Record<string, number> = { "5m": 300, "15m": 900, "1h": 3600 };
 
 const pad = (s: string, w: number) => String(s).padStart(w);
@@ -33,6 +36,20 @@ function dayKey(t: number): number {
 
 async function klines(symbol: string, interval: string, startMs: number, endMs: number): Promise<Candle[]> {
   const stepMs = STEP[interval] * 1000;
+  const cacheDir = "/tmp/opencode/klines";
+  fsSync.mkdirSync(cacheDir, { recursive: true });
+  const cacheFile = `${cacheDir}/${symbol}-${interval}-${startMs}-${endMs}.json`;
+  if (fsSync.existsSync(cacheFile)) return JSON.parse(fsSync.readFileSync(cacheFile, "utf8")) as Candle[];
+  const startSec = startMs / 1000;
+  const endSec = endMs / 1000;
+  const need = ((endSec - startSec) / STEP[interval]) * 0.9;
+  for (const f of fsSync.readdirSync(cacheDir)) {
+    if (!f.startsWith(`${symbol}-${interval}-`)) continue;
+    const arr = JSON.parse(fsSync.readFileSync(`${cacheDir}/${f}`, "utf8")) as Candle[];
+    if (!arr.length || arr[0].t > startSec || arr[arr.length - 1].t + STEP[interval] < endSec) continue;
+    const sub = arr.filter((c) => c.t >= startSec && c.t < endSec);
+    if (sub.length >= need) return sub;
+  }
   const out: Candle[] = [];
   let cur = startMs;
   for (let guard = 0; guard < 300 && cur < endMs; guard++) {
@@ -59,7 +76,9 @@ async function klines(symbol: string, interval: string, startMs: number, endMs: 
   }
   const map = new Map<number, Candle>();
   for (const c of out) map.set(c.t, c);
-  return [...map.values()].sort((a, b) => a.t - b.t);
+  const res = [...map.values()].sort((a, b) => a.t - b.t);
+  if (res.length >= ((endMs - startMs) / stepMs) * 0.9) fsSync.writeFileSync(cacheFile, JSON.stringify(res));
+  return res;
 }
 
 function closedEnd(arr: Candle[], tClose: number, sec: number): number {
@@ -194,6 +213,8 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
       confirmSpanMax: cfg.span,
       preAnchorBars: cfg.pre?.bars,
       exhaustAtr: cfg.pre?.atr,
+      zoneWindowSec: ZW > 0 ? ZW * 900 : undefined,
+      zoneInvalidateMtf: process.env.BT_ZINV === "15",
     });
       cfg.state = { firedZone: res.firedZone, zoneKey: res.zoneKey, zoneStartT: res.zoneStartT };
 

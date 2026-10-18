@@ -52,6 +52,7 @@ export type BattleState = {
 // 回测可覆盖的可调阈值；生产不传，沿用上方常量。
 export type BattleEvalOpts = {
   zoneWindowSec?: number; // 覆盖 ZONE_WINDOW_SEC
+  zoneInvalidateMtf?: boolean; // 失效判定改用 MTF 收盘（默认 LTF）
   confirmSpanMax?: number; // 覆盖 CONFIRM_SPAN_MAX
   obMitigation?: "wick"|"close"; // OB 缓解判定，默认 close（收盘确认，避免扫荡 K 自我抵消）
   preAnchorBars?: number; // 回测实验：无窗口内确认1时，允许用入区前 N 根 15m 的同向内部突破作锚点
@@ -114,9 +115,9 @@ function parseZoneKey(key: string): Zone | null {
   return { bias: p[0] as Bias, kind: p[1] as Zone["kind"], idx: Number(p[2]), bottom: Number(p[3]), top: Number(p[4]), t: 0 };
 }
 // 区域失效：窗口内任一 5m 收盘价穿过远端边界（做多=收盘 < 下沿；做空=收盘 > 上沿）。
-function zoneInvalidated(ltf: Candle[], startT: number, lastCloseT: number, z: Zone): boolean {
-  for (const c of ltf) {
-    const closeT = c.t + LTF.sec;
+function zoneInvalidated(candles: Candle[], startT: number, lastCloseT: number, z: Zone, tfSec: number): boolean {
+  for (const c of candles) {
+    const closeT = c.t + tfSec;
     if (closeT <= startT || closeT > lastCloseT) continue;
     if (z.bias === "bull" ? c.c < z.bottom : c.c > z.top) return true;
   }
@@ -552,7 +553,13 @@ export function evaluateBattle(
   if (zoneKey && zoneStartT != null) {
     const z = parseZoneKey(zoneKey)!;
     const expired = lastCloseT - zoneStartT > (opts.zoneWindowSec ?? ZONE_WINDOW_SEC);
-    const invalid = zoneInvalidated(ltf, zoneStartT, lastCloseT, z);
+    const invalid = zoneInvalidated(
+      opts.zoneInvalidateMtf ? mtf : ltf,
+      zoneStartT,
+      lastCloseT,
+      z,
+      opts.zoneInvalidateMtf ? MTF.sec : LTF.sec,
+    );
     if (expired || invalid) {
       if (firedZone === zoneKey) firedZone = "";
       zoneKey = "";
