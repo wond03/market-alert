@@ -46,7 +46,7 @@ async function klines(symbol: string, interval: string, startMs: number, endMs: 
   for (const f of fsSync.readdirSync(cacheDir)) {
     if (!f.startsWith(`${symbol}-${interval}-`)) continue;
     const arr = JSON.parse(fsSync.readFileSync(`${cacheDir}/${f}`, "utf8")) as Candle[];
-    if (!arr.length || arr[0].t > startSec || arr[arr.length - 1].t + STEP[interval] < endSec) continue;
+    if (!arr.length || arr[0].t > startSec || arr[arr.length - 1].t + STEP[interval] < endSec - 7200) continue;
     const sub = arr.filter((c) => c.t >= startSec && c.t < endSec);
     if (sub.length >= need) return sub;
   }
@@ -343,6 +343,7 @@ async function main() {
   console.log("spans: " + SPANS.map((s) => `${s}根5m=${s * 5}min`).join(" | "));
   console.log(header());
   for (const span of SPANS) console.log(row(`span=${span}`, stats(runs[span].events)));
+  if (process.env.BT_DUMP) fsSync.writeFileSync(process.env.BT_DUMP, JSON.stringify(runs[String(SPANS[0])].events));
 
   if (runs[12]) {
   const base = runs[6].events;
