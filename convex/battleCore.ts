@@ -27,7 +27,7 @@ export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆�
 export const ZONE_WINDOW_BARS = 24; // 24 根 15m
 export const ZONE_WINDOW_SEC = ZONE_WINDOW_BARS * 900; // 21600s = 6h
 // 被用到的「确认1」与「确认2」两根 5m K 的索引差绝对值上限（顺序不限）。
-export const CONFIRM_SPAN_MAX = 6; // 6 根 5m = 30 分钟
+export const CONFIRM_SPAN_MAX = 12; // 12 根 5m = 60 分钟
 export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓冲
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
@@ -52,7 +52,8 @@ export type BattleState = {
 // 回测可覆盖的可调阈值；生产不传，沿用上方常量。
 export type BattleEvalOpts = {
   zoneWindowSec?: number; // 覆盖 ZONE_WINDOW_SEC
-  zoneInvalidateMtf?: boolean; // 失效判定改用 MTF 收盘（默认 LTF）
+  zoneInvalidateMtf?: boolean;
+ confirm5m?: boolean; // 确认1改用 5m 内部结构突破（默认 15m）
   confirmSpanMax?: number; // 覆盖 CONFIRM_SPAN_MAX
   obMitigation?: "wick"|"close"; // OB 缓解判定，默认 close（收盘确认，避免扫荡 K 自我抵消）
   preAnchorBars?: number; // 回测实验：无窗口内确认1时，允许用入区前 N 根 15m 的同向内部突破作锚点
@@ -140,6 +141,18 @@ export function confirm1Indices(mtf: Candle[], ltf: Candle[], bias: Bias, startT
     if (i >= 0) out.push({ i, tag: b.tag });
   }
   return out;
+}
+// 回测实验：用 5m 内部结构突破替代 15m 确认1。
+export function confirm1Indices5m(ltf: Candle[], bias: Bias, startT: number, lastCloseT: number): C1[] {
+ const out: C1[] = [];
+ for (const b of runStructure(ltf, INTERNAL_LEN).breaks) {
+ if (b.dir !== bias) continue;
+ const bc = b.t + LTF.sec;
+ if (bc <= startT||bc > lastCloseT) continue;
+ const i = firstLtfIdxClosingAtOrAfter(ltf, bc);
+ if (i >= 0) out.push({ i, tag: b.tag });
+ }
+ return out;
 }
 // 回测实验：把入区前的同向 15m 内部突破当作确认1锚点（索引取入区前一根 5m，使配对待确认2按入区后计时）。
 export function preAnchorC1(
@@ -452,7 +465,6 @@ export function buildMessage(
     `方向 ${MTF.tf}　${dirCn} · ${htfTag} ${dirWord}破 <b>${gate.fmtPrice(htfLevel)}</b>\n` +
     `入区 ${MTF.tf}　${zone.kind} ${gate.fmtPrice(zone.bottom)}–${gate.fmtPrice(zone.top)}\n` +
     `流动性　　${liq}\n` +
-    `确认 ${MTF.tf}　<b>${confirmInternal}</b>\n` +
     `确认 ${LTF.tf}　<b>${confirm}</b>\n` +
     `${sep}\n` +
     `入场 <b>${gate.fmtPrice(entry)}</b>（${tradeCn}）\n` +
@@ -489,6 +501,7 @@ export type BattleEval = {
   zoneKey: string;
   zoneStartT: number | null;
   signal: BattleSignal | null;
+  blockedSignal?: BattleSignal | null;
   funnel?: FunnelInfo | null;
 };
 
@@ -585,42 +598,34 @@ export function evaluateBattle(
   const z = parseZoneKey(zoneKey)!;
   const startT = zoneStartT as number;
 
-  // 窗口内：确认1（15m 内部同向突破）与确认2（5m 触发）事件所在的 5m K 索引。
-  const c1 = confirm1Indices(mtf, ltf, bias, startT, lastCloseT);
+  // 窗口内：仅需 5m 触发（结构突破 / 吞没 / Pin Bar）。
   const c2 = confirm2Indices(ltf, bias, startT, lastCloseT);
-  if (opts.preAnchorBars && !c1.length) {
-    const i0 = firstLtfIdxClosingAtOrAfter(ltf, startT);
-    const entryPx = i0 >= 0 ? ltf[i0].c : price;
-    const pa = preAnchorC1(mtf, ltf, bias, startT, entryPx, opts.preAnchorBars, opts.exhaustAtr ?? 1.5);
-    if (pa) c1.push(pa);
-  }
-  const pair = closestPair(c1, c2, opts.confirmSpanMax ?? CONFIRM_SPAN_MAX);
-  const c1T = c1.length ? ltf[c1[0].i]?.t ?? null : null;
   const c2T = c2.length ? ltf[c2[0].i]?.t ?? null : null;
-  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: false, pair: pair !== null, gap: pair ? null : minGap(c1, c2), c1n: c1.length, c2n: c2.length, c2Kind: c2[0]?.kind ?? null };
+  funnel = {
+    zoneKey,
+    zoneStartT: startT,
+    c1T: null,
+    c2T,
+    confirmed: false,
+    pair: c2.length > 0,
+    gap: c2.length ? 0 : null,
+    c1n: 0,
+    c2n: c2.length,
+    c2Kind: c2[0]?.kind ?? null,
+  };
+  if (!c2.length) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+  const pair = { confirm: c2[0].label, confirmInternal: c2[0].kind };
   if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   // 当天去重：同一区域只推一次。
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
-
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
-  if (risk.target === null) {
-    funnel = { ...funnel, tradable: false };
-    return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
-  }
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : z.top;
   const bgOk = bg === "bull" || bg === "bear";
   const bgTag = bgOk && htfLast ? htfLast.tag : "";
  const bgLevel = bgOk && htfLast ? htfLast.level : 0;
-  funnel = { zoneKey, zoneStartT: startT, c1T, c2T, confirmed: true, pair: true, tradable: true };
- return {
- bias,
- firedZone: zoneKey,
- zoneKey,
- zoneStartT,
- funnel,
- signal: {
+  const signal: BattleSignal = {
       bias: bias === "bull" ? "long" : "short",
       bg,
       htfTag: dirTag,
@@ -659,8 +664,9 @@ export function evaluateBattle(
         now,
         sizeNoteOf(symbol, pair.confirmInternal, sweep.swept, risk.entry),
       ),
-    },
-  };
+    };
+  funnel = { zoneKey, zoneStartT: startT, c1T: null, c2T, confirmed: true, pair: true, tradable: true };
+  return { bias, firedZone: zoneKey, zoneKey, zoneStartT, funnel, signal };
 }
 
 export type Resolution = { result: "stop" | "target"; ts: number; price: number };

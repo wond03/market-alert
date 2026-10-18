@@ -12,7 +12,7 @@ const SYMS = [
 
 const DAYS = Number(process.env.BT_DAYS ?? 182);
 const FWD_BARS = 288;
-const COST_ROUNDTRIP = 0.0010;
+const COST_ROUNDTRIP = Number(process.env.BT_COST ?? 0.0010);
 const BJ = 8 * 3600;
 const SPANS = (process.env.BT_SPANS ?? "6,12").split(",").map(Number);
 const PRE_C = process.env.BT_C === "1";
@@ -92,31 +92,129 @@ function closedEnd(arr: Candle[], tClose: number, sec: number): number {
   return lo;
 }
 
-type Outcome = { rNet: number; why: "target" | "stop" | "time"; exitIdx: number };
+type Outcome = { rNet: number; why: "target" | "stop" | "time" | "nofill"; exitIdx: number; exitPrice?: number };
+
+function regimeOf(htf: Candle[]): { label: string; ret: number; z: number } {
+  const n = 48;
+  if (htf.length < n + 16) return { label: "na", ret: 0, z: 0 };
+  const last = htf[htf.length - 1];
+  const back = htf[htf.length - 1 - n];
+  const ret = (last.c - back.c) / back.c;
+  let tr = 0;
+  for (let i = htf.length - 14; i < htf.length; i++) {
+    const h = htf[i];
+    const pc = htf[i - 1].c;
+    tr += Math.max(h.h - h.l, Math.abs(h.h - pc), Math.abs(h.l - pc));
+  }
+  const atrPct = tr / 14 / last.c;
+  const z = atrPct > 0 ? Math.abs(ret) / (atrPct * Math.sqrt(n)) : 0;
+  return { label: z < 1 ? "range" : ret > 0 ? "up" : "down", ret, z };
+}
 
 function simulate(
-  sig: { bias: "long" | "short"; entry: number; stop: number; target: number | null },
-  j: number,
-  c5: Candle[],
+sig: { bias: "long"|"short"; entry: number; stop: number; target: number|null },
+j: number,
+c5: Candle[],
 ): Outcome {
-  const up = sig.bias === "long";
-  const risk = Math.abs(sig.entry - sig.stop);
-  const costR = risk > 0 ? (COST_ROUNDTRIP * sig.entry) / risk : 0;
-  if (!(risk > 0)) return { rNet: 0, why: "time", exitIdx: j };
-  const end = Math.min(c5.length, j + 1 + FWD_BARS);
-  for (let k = j + 1; k < end; k++) {
-    const c = c5[k];
-    if (up) {
-      if (c.l <= sig.stop) return { rNet: -1 - costR, why: "stop", exitIdx: k };
-      if (sig.target != null && c.h >= sig.target) return { rNet: (sig.target - sig.entry) / risk - costR, why: "target", exitIdx: k };
-    } else {
-      if (c.h >= sig.stop) return { rNet: -1 - costR, why: "stop", exitIdx: k };
-      if (sig.target != null && c.l <= sig.target) return { rNet: (sig.entry - sig.target) / risk - costR, why: "target", exitIdx: k };
-    }
+ const up = sig.bias === "long";
+ const slip = Number(process.env.BT_SLIP ?? 0);
+ const entryEff = up ? sig.entry * (1 + slip) : sig.entry * (1 - slip);
+ const stopFill = up ? sig.stop * (1 - slip) : sig.stop * (1 + slip);
+ const risk = Math.abs(sig.entry - sig.stop);
+ const costR = risk > 0 ? (COST_ROUNDTRIP * entryEff) / risk : 0;
+ if (!(risk > 0)) return { rNet: 0, why: "time", exitIdx: j, exitPrice: sig.entry };
+ if (process.env.BT_FILL === "real") return simulateReal(sig, j, c5, entryEff, stopFill, risk, costR, up, slip);
+ const end = Math.min(c5.length, j + 1 + FWD_BARS);
+ for (let k = j + 1; k < end; k++) {
+ const c = c5[k];
+ if (up) {
+ if (c.l <= sig.stop) return { rNet: (stopFill - entryEff) / risk - costR, why: "stop", exitIdx: k, exitPrice: stopFill };
+ if (sig.target != null && c.h >= sig.target) {
+ const tgt = sig.target * (1 - slip);
+ return { rNet: (tgt - entryEff) / risk - costR, why: "target", exitIdx: k, exitPrice: tgt };
+ }
+ } else {
+ if (c.h >= sig.stop) return { rNet: (entryEff - stopFill) / risk - costR, why: "stop", exitIdx: k, exitPrice: stopFill };
+ if (sig.target != null && c.l <= sig.target) {
+ const tgt = sig.target * (1 + slip);
+ return { rNet: (entryEff - tgt) / risk - costR, why: "target", exitIdx: k, exitPrice: tgt };
+ }
+ }
+ }
+ const rawLast = c5[end - 1].c;
+ const lastC = up ? rawLast * (1 - slip) : rawLast * (1 + slip);
+ const rGross = up ? (lastC - entryEff) / risk : (entryEff - lastC) / risk;
+ return { rNet: rGross - costR, why: "time", exitIdx: end - 1, exitPrice: lastC };
+}
+
+function trailingStats(c5: Candle[], k: number, n = 288) {
+ const from = Math.max(0, k - n);
+ const vols: number[] = [];
+ const ranges: number[] = [];
+ for (let i = from; i < k; i++) {
+  vols.push(c5[i].v);
+  ranges.push((c5[i].h - c5[i].l) / c5[i].c);
+ }
+ vols.sort((a, b) => a - b);
+ ranges.sort((a, b) => a - b);
+ const pick = (arr: number[], q: number) => arr.length ? arr[Math.floor((arr.length - 1) * q)] : 0;
+ return { volP20: pick(vols, 0.2), rangeMed: pick(ranges, 0.5) };
+}
+
+function simulateReal(
+ sig: { bias: "long"|"short"; entry: number; stop: number; target: number|null },
+ j: number,
+ c5: Candle[],
+ entryEff: number,
+ stopFill: number,
+ risk: number,
+ costR: number,
+ up: boolean,
+ slip: number,
+): Outcome {
+ const entry = sig.entry;
+ const end = Math.min(c5.length, j + 1 + FWD_BARS);
+ let fill = -1;
+ for (let k = j + 1; k < end; k++) {
+  const c = c5[k];
+  const targetFirst = up
+   ? sig.target != null && c.h >= sig.target && c.l > entry
+   : sig.target != null && c.l <= sig.target && c.h < entry;
+  if (targetFirst) return { rNet: 0, why: "nofill", exitIdx: j, exitPrice: entry };
+  const touched = up ? c.l <= entry : c.h >= entry;
+  if (!touched) continue;
+  const { volP20, rangeMed } = trailingStats(c5, k);
+  const liquid = c.v > volP20 && (c.h - c.l) / c.c <= rangeMed;
+  const next = c5[k + 1];
+  const held = up
+   ? c.c <= entry || (next != null && next.l <= entry)
+   : c.c >= entry || (next != null && next.h >= entry);
+  const relax = process.env.BT_FILL_RELAX ?? "base";
+ const useLiquid = relax !== "touch";
+ const useHeld = relax === "base";
+ if ((useLiquid ? liquid : true) && (useHeld ? held : true)) { fill = k; break; }
+ }
+ if (fill < 0) return { rNet: 0, why: "nofill", exitIdx: j, exitPrice: entry };
+ const stopEnd = Math.min(c5.length, fill + 1 + FWD_BARS);
+ for (let k = fill; k < stopEnd; k++) {
+  const c = c5[k];
+  if (up) {
+   if (c.l <= sig.stop) return { rNet: (stopFill - entryEff) / risk - costR, why: "stop", exitIdx: k, exitPrice: stopFill };
+   if (sig.target != null && c.h >= sig.target) {
+    const tgt = sig.target * (1 - slip);
+    return { rNet: (tgt - entryEff) / risk - costR, why: "target", exitIdx: k, exitPrice: tgt };
+   }
+  } else {
+   if (c.h >= sig.stop) return { rNet: (entryEff - stopFill) / risk - costR, why: "stop", exitIdx: k, exitPrice: stopFill };
+   if (sig.target != null && c.l <= sig.target) {
+    const tgt = sig.target * (1 + slip);
+    return { rNet: (entryEff - tgt) / risk - costR, why: "target", exitIdx: k, exitPrice: tgt };
+   }
   }
-  const lastC = c5[end - 1];
-  const rGross = up ? (lastC.c - sig.entry) / risk : (sig.entry - lastC.c) / risk;
-  return { rNet: rGross - costR, why: "time", exitIdx: end - 1 };
+ }
+ const lastC = c5[stopEnd - 1].c * (up ? 1 - slip : 1 + slip);
+ const rGross = up ? (lastC - entryEff) / risk : (entryEff - lastC) / risk;
+ return { rNet: rGross - costR, why: "time", exitIdx: stopEnd - 1, exitPrice: lastC };
 }
 
 type Event = {
@@ -128,8 +226,15 @@ type Event = {
   sweep: boolean;
   trig: "CHoCH" | "BOS";
   rr: number | null;
+  regime: string;
+  ret48: number;
+  z: number;
+  entry: number;
+  stop: number;
+  target: number | null;
+  exitTs?: number;
   outcome: Outcome | null;
-  skip: "" | "position" | "zone";
+  skip: "" | "position" | "zone" | "rr";
 };
 
 type Window = { sym: string; stage: number; gap?: number | null; c1n?: number; c2n?: number; c2Kind?: string; startT?: number; lastT?: number; c1T?: number; c2T?: number; zoneKey?: string; bias?: string; preAges?: number[]; preTags?: string[] };
@@ -179,6 +284,9 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
     state: { firedZone: "", zoneKey: "", zoneStartT: null } as BattleState,
     windows: new Map<string, Window>(),
     tradedZones: new Set<string>(),
+    zoneHits: new Map<string, { n: number; t: number }>(),
+    rrSeen: new Set<string>(),
+    fireTs: 0,
     lockUntil: -1,
     events: [] as Event[],
   }));
@@ -191,6 +299,9 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
         state: { firedZone: "", zoneKey: "", zoneStartT: null } as BattleState,
         windows: new Map<string, Window>(),
         tradedZones: new Set<string>(),
+      zoneHits: new Map<string, { n: number; t: number }>(),
+        rrSeen: new Set<string>(),
+    fireTs: 0,
         lockUntil: -1,
         events: [] as Event[],
       });
@@ -209,14 +320,20 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
     bars++;
 
     for (const cfg of cfgs) {
+      const rearmH = Number(process.env.BT_REARM ?? 0);
+      if (rearmH > 0 && cfg.state.firedZone && tClose - cfg.fireTs >= rearmH * 3600 * 1000) {
+        cfg.state = { ...cfg.state, firedZone: "" };
+      }
       const res = evaluateBattle(htf, mtf, ltf, cfg.state, tClose, "gate", sym.name, {
       confirmSpanMax: cfg.span,
       preAnchorBars: cfg.pre?.bars,
       exhaustAtr: cfg.pre?.atr,
       zoneWindowSec: ZW > 0 ? ZW * 900 : undefined,
       zoneInvalidateMtf: process.env.BT_ZINV === "15",
+      confirm5m: process.env.BT_CONFIRM === "5m",
     });
       cfg.state = { firedZone: res.firedZone, zoneKey: res.zoneKey, zoneStartT: res.zoneStartT };
+      if (res.signal) cfg.fireTs = tClose;
 
       const fn = res.funnel;
       if (cfg === cfgs[0] && j % 12 === 0 && (res.bias === "bull" || res.bias === "bear")) {
@@ -244,7 +361,38 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
       }
 
       const sig = res.signal;
-      if (!sig) continue;
+      if (!sig) {
+        const b = res.blockedSignal;
+        const dayKey = b ? Math.floor((b.sigTs + 8 * 3600) / 86400) : 0;
+        if (b && !cfg.rrSeen.has(`${sym.name}|${res.zoneKey}|${dayKey}`)) {
+          cfg.rrSeen.add(`${sym.name}|${res.zoneKey}|${dayKey}`);
+          const bb: Event = {
+            sym: sym.name,
+            ts: b.sigTs,
+            week: weekStart(b.sigTs),
+            bias: b.bias,
+            zoneKey: res.zoneKey,
+            sweep: b.sweep,
+            trig: b.confirmInternal,
+            rr: b.rr,
+            regime: regimeOf(htf).label,
+            ret48: regimeOf(htf).ret,
+            z: regimeOf(htf).z,
+            entry: b.entryPrice,
+            stop: b.stopPrice,
+            target: b.targetPrice,
+            outcome: null,
+            skip: "rr",
+          };
+          const out = simulate(
+            { bias: b.bias, entry: b.entryPrice, stop: b.stopPrice, target: b.targetPrice },
+            j,
+            c5,
+          );
+          cfg.events.push({ ...bb, outcome: out, exitTs: c5[out.exitIdx]?.t });
+        }
+        continue;
+      }
 
       const base: Event = {
         sym: sym.name,
@@ -255,6 +403,12 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
         sweep: sig.sweep,
         trig: sig.confirmInternal,
         rr: sig.rr,
+        regime: regimeOf(htf).label,
+        ret48: regimeOf(htf).ret,
+        z: regimeOf(htf).z,
+        entry: sig.entryPrice,
+        stop: sig.stopPrice,
+        target: sig.targetPrice,
         outcome: null,
         skip: "",
       };
@@ -263,7 +417,10 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
         cfg.events.push({ ...base, skip: "position" });
         continue;
       }
-      if (cfg.tradedZones.has(res.zoneKey)) {
+      const zh = cfg.zoneHits.get(res.zoneKey);
+      const bts = c5[j].t;
+      const allowRe = process.env.BT_REARM != null || (process.env.BT_REENTRY === "2" && zh != null && zh.n < 2 && bts - zh.t <= 4 * 3600 * 1000);
+      if (zh != null && !allowRe) {
         cfg.events.push({ ...base, skip: "zone" });
         continue;
       }
@@ -273,12 +430,21 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
         j,
         c5,
       );
+ if (out.why === "nofill") {
+       cfg.events.push({ ...base, outcome: out, exitTs: c5[out.exitIdx]?.t });
+       if (process.env.BT_LOCK_NOFILL === "1") {
+         cfg.tradedZones.add(res.zoneKey);
+         cfg.lockUntil = j + 1;
+       }
+       continue;
+      }
       cfg.tradedZones.add(res.zoneKey);
+      cfg.zoneHits.set(res.zoneKey, { n: (zh?.n ?? 0) + 1, t: zh?.t ?? bts });
       cfg.lockUntil = out.exitIdx + 1;
       const wk = `${sym.name}|${res.zoneKey}|${res.zoneStartT}`;
       const w = cfg.windows.get(wk);
       if (w) w.stage = 6;
-      cfg.events.push({ ...base, outcome: out });
+      cfg.events.push({ ...base, outcome: out, exitTs: c5[out.exitIdx]?.t });
     }
   }
 
@@ -287,7 +453,7 @@ async function runSymbol(sym: { name: string; binance: string }): Promise<Record
 }
 
 function stats(rows: Event[]) {
-  const closed = rows.filter((r) => r.outcome);
+  const closed = rows.filter((r) => r.outcome && r.outcome.why !== "nofill");
   const wins = closed.filter((r) => r.outcome!.why === "target").length;
   const losses = closed.filter((r) => r.outcome!.why === "stop").length;
   const time = closed.filter((r) => r.outcome!.why === "time").length;

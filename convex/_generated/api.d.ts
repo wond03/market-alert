@@ -17,6 +17,7 @@ import type * as luxSmc from "../luxSmc.js";
 import type * as panel from "../panel.js";
 import type * as report from "../report.js";
 import type * as telegram from "../telegram.js";
+import type * as weex from "../weex.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   panel: typeof panel;
   report: typeof report;
   telegram: typeof telegram;
+  weex: typeof weex;
 }>;
 
 /**

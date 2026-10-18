@@ -158,6 +158,7 @@ const prev = {
 };
  const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol, {
   zoneInvalidateMtf: true,
+  confirm5m: true,
  });
 
  // 漏斗：活动区域推进到哪一层，落库（每层只记一次）。
@@ -226,6 +227,16 @@ const prev = {
           signals: [{ exchange: EXCHANGE, symbol, createdAt: now, ...res.signal }],
         });
         openSignalId = ids.length ? ids[0] : null;
+        if (ids.length) {
+          await ctx.scheduler.runAfter(0, internal.weex.placeSignalOrder, {
+            signalId: String(ids[0]),
+            symbol,
+            bias: res.signal.bias,
+            entry: res.signal.entryPrice,
+            stop: res.signal.stopPrice,
+            target: res.signal.targetPrice ?? undefined,
+          });
+        }
         let pushFail: string | null = null;
         try {
           pushFail = await sendTelegram(res.signal.text);

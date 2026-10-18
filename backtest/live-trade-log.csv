@@ -1,0 +1,1 @@
+signal_ts_utc,order_ts_utc,latency_sec,symbol,direction,grade,regime,planned_entry,fill_price,entry_slip_pct,stop,target,exit_ts_utc,exit_price,exit_slip_pct,exit_reason,planned_risk_pct,actual_risk_pct,r_net,notes
