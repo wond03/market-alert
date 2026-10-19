@@ -120,7 +120,9 @@ async function lastPrice(contract: string): Promise<number> {
   return price;
 }
 
-async function contractSpec(contract: string): Promise<{ precision: number; minSize: number }> {
+async function contractSpec(
+  contract: string,
+): Promise<{ precision: number; pricePrecision: number; minSize: number }> {
   const res = await fetch(`${baseUrl()}/capi/v3/market/exchangeInfo`);
   if (!res.ok) throw new Error(`exchangeInfo ${res.status}`);
   const payload = await res.json();
@@ -128,6 +130,7 @@ async function contractSpec(contract: string): Promise<{ precision: number; minS
   const row = symbols.find((item) => item?.symbol === contract);
   return {
     precision: Number(row?.quantityPrecision ?? 3),
+    pricePrecision: Number(row?.pricePrecision ?? 2),
     minSize: Number(row?.minOrderSize ?? 0),
   };
 }
@@ -140,6 +143,33 @@ function floorTo(value: number, precision: number): number {
 function roundPrice(value: number, precision: number): number {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
+}
+
+async function placeTpSl(
+  contract: string,
+  positionSide: string,
+  planType: "TAKE_PROFIT" | "STOP_LOSS",
+  triggerPrice: number,
+  quantity: string,
+  clientAlgoId: string,
+): Promise<string> {
+  const payload = await signedRequest("POST", "/capi/v3/placeTpSlOrder", {}, {
+    symbol: contract,
+    clientAlgoId,
+    planType,
+    triggerPrice: triggerPrice.toFixed(2),
+    executePrice: "0",
+    quantity,
+    positionSide,
+    triggerPriceType: "CONTRACT_PRICE",
+    reduceOnly: true,
+  });
+  const rows = dataOf(payload);
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row?.success) {
+    throw new Error(`${planType} ${row?.errorCode ?? ""} ${row?.errorMessage ?? ""}`.trim());
+  }
+  return String(row?.orderId ?? clientAlgoId);
 }
 
 export const placeSignalOrder = internalAction({
@@ -176,32 +206,54 @@ export const placeSignalOrder = internalAction({
         );
       }
       await setLeverage(contract, leverage);
-      const payload = await signedRequest("POST", "/capi/v3/order", {}, {
-        symbol: contract,
-        side: long ? "BUY" : "SELL",
-        positionSide: long ? "LONG" : "SHORT",
-        type: "MARKET",
-        quantity: quantity.toFixed(spec.precision),
-        newClientOrderId: `smc-${args.signalId}`.slice(0, 36),
-      });
-      const rows = dataOf(payload);
-      const order = Array.isArray(rows) ? rows[0] : rows;
-      const orderId = String(order?.orderId ?? order?.clientOrderId ?? "unknown");
-      const stopPrice = roundPrice(args.stop, 2);
-      const targetPrice =
-        args.target != null
-          ? roundPrice(args.target, 2)
-          : roundPrice(args.entry + (long ? 1 : -1) * Math.abs(args.entry - args.stop) * 2, 2);
+    const stopPrice = roundPrice(args.stop, spec.pricePrecision);
+    const targetPrice = roundPrice(
+      args.target != null
+        ? args.target
+        : args.entry + (long ? 1 : -1) * Math.abs(args.entry - args.stop) * 2,
+      spec.pricePrecision,
+    );
+    const tag = args.signalId.slice(-8);
+    const payload = await signedRequest("POST", "/capi/v3/order", {}, {
+      symbol: contract,
+      side: long ? "BUY" : "SELL",
+      positionSide: long ? "LONG" : "SHORT",
+      type: "MARKET",
+      quantity: quantity.toFixed(spec.precision),
+      newClientOrderId: `smc-${tag}`,
+    });
+    const rows = dataOf(payload);
+    const order = Array.isArray(rows) ? rows[0] : rows;
+    const orderId = String(order?.orderId ?? order?.clientOrderId ?? "unknown");
+    const posSide = long ? "LONG" : "SHORT";
+    try {
+      await placeTpSl(contract, posSide, "STOP_LOSS", stopPrice, quantity.toFixed(spec.precision), `smc-sl-${tag}`);
+    } catch (e) {
+      await signedRequest("POST", "/capi/v3/closePositions", {}, { symbol: contract });
       await sendTelegram(
-        [
-          `${long ? "多" : "空"} ${contract} 自动入场`,
-          `${margin}U x${leverage} @ ~${roundPrice(price, 2)} 数量 ${quantity}`,
-          `实际保证金约 ${(quantity * price / leverage).toFixed(2)}U`,
-          `参考止损 ${stopPrice}　参考止盈 ${targetPrice}（未挂单）`,
-          `订单 ${orderId}，止盈止损由你手动设置`,
-        ].join("\n"),
+        `${contract} 止损挂单失败，已市价平仓：${String(e).slice(0, 160)}`,
       );
-      return { placed: orderId, quantity, price };
+      return { error: "sl failed, position closed" };
+    }
+    let tpOk = true;
+    try {
+      await placeTpSl(contract, posSide, "TAKE_PROFIT", targetPrice, quantity.toFixed(spec.precision), `smc-tp-${tag}`);
+    } catch (e) {
+      tpOk = false;
+      await sendTelegram(
+        `${contract} 止盈挂单失败，止损已挂：${String(e).slice(0, 160)}`,
+      );
+    }
+    await sendTelegram(
+      [
+        `${long ? "多" : "空"} ${contract} 自动入场`,
+        `${margin}U x${leverage} @ ~${roundPrice(price, spec.pricePrecision)} 数量 ${quantity}`,
+        `实际保证金约 ${(quantity * price / leverage).toFixed(2)}U`,
+        `止损 ${stopPrice}　${tpOk ? `止盈 ${targetPrice}` : "止盈未挂"}（交易所条件单，触发市价平仓）`,
+        `订单 ${orderId}`,
+      ].join("\n"),
+    );
+    return { placed: orderId, quantity, price, tpOk };
     } catch (e) {
       const reason = String(e).slice(0, 200);
       await sendTelegram(`${contract} 自动下单失败：${reason}`);
