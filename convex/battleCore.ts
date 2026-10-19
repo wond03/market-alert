@@ -226,6 +226,32 @@ function minGap(c1: C1[], c2: C2[]): number | null {
   return best;
 }
 
+// 相邻价格区间距离：重叠为 0。
+function rangeGap(aLo: number, aHi: number, bLo: number, bHi: number): number {
+  if (aHi < bLo) return bLo - aHi;
+  if (bHi < aLo) return aLo - bHi;
+  return 0;
+}
+
+// IFVG 失效：订单块邻近的同向 FVG 被收盘反向穿越后，订单块视为撑不住。
+function obInvalidatedByIfvg(
+  candles: Candle[],
+  ob: { bias: Bias; idx: number; high: number; low: number },
+  fvgs: ReturnType<typeof computeFvgs>,
+  atrVal: number,
+): boolean {
+  const tol = (isFinite(atrVal) ? atrVal : 0) * 0.25;
+  for (const f of fvgs) {
+    if (f.dir !== ob.bias) continue;
+    const gap = rangeGap(f.bottom, f.top, ob.low, ob.high);
+    if (gap > tol) continue;
+    for (let k = Math.max(f.idx, ob.idx) + 1; k < candles.length; k++) {
+      if (ob.bias === "bull" ? candles[k].c < f.bottom : candles[k].c > f.top) return true;
+    }
+  }
+  return false;
+}
+
 export function battleZones(
   candles: Candle[],
   bias: Bias,
@@ -233,13 +259,14 @@ export function battleZones(
 ): Zone[] {
   const swing = runStructure(candles, SWING_LEN, "atr", obMitigation);
   const atrArr = atr(candles, ATR_LEN);
+  const fvgs = computeFvgs(candles);
   const zones: Zone[] = [];
   for (const o of swing.orderBlocks) {
-    if (o.mitigatedIdx === null && o.bias === bias) {
-      zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
-    }
+    if (o.mitigatedIdx !== null || o.bias !== bias) continue;
+    if (obInvalidatedByIfvg(candles, o, fvgs, atrArr[o.idx] ?? atrArr[atrArr.length - 1])) continue;
+    zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
   }
-  for (const f of computeFvgs(candles)) {
+  for (const f of fvgs) {
     if (f.mitigatedIdx === null && f.dir === bias) {
       zones.push({ kind: "FVG", bias, top: f.top, bottom: f.bottom, idx: f.idx, t: f.t });
     }

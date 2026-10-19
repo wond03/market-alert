@@ -16,6 +16,7 @@ mindmap
         1h 背景偏置 摆动4
         15m 日内方向 摆动16
         OB FVG 入区 FVG优先
+        IFVG 使邻近订单块失效
         6h 窗口 60m 触发
         5m 触发 右侧确认
         buildRisk 止损止盈RR
@@ -67,7 +68,7 @@ mindmap
 |---|---|---|---|
 | 1 背景 | 1h 摆动结构定 bull/bear/range，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` |
 | 2 方向 | 15m 摆动 BOS/CHoCH（摆动 16），须日内且带位移 | `MTF_DIR_SWING=16`、`DISP_MULT=1.5` | `battleCore.ts:24` `:534` |
-| 3 入区 | 价格回到顺向未失效 15m OB/FVG；FVG 优先，多个取离 OB 最近，无 OB 取离价最近 | `ZONE_BUF_ATR=0.15` | `battleCore.ts:586` |
+| 3 入区 | 价格回到顺向未失效 15m OB/FVG；FVG 优先，多个取离 OB 最近，无 OB 取离价最近；邻近同向 FVG 被反向收盘穿越（IFVG）时订单块失效（区间距离 ≤0.25ATR） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:255` |
 | 4 窗口 | 首次入区起 6h，5m 收盘穿远端即失效 | `ZONE_WINDOW_BARS=24` | `battleCore.ts:27` |
 | 5 触发 | 5m 结构突破 / 吞没 / Pin Bar，须入区后 60 分钟内 | `CONFIRM_SPAN_MAX=12` | `battleCore.ts:30` |
 | 6 右侧 | 触发后下一根 5m 须顺势收盘且越过触发收盘价 | — | `battleCore.ts:633` |
