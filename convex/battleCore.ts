@@ -590,26 +590,27 @@ export function evaluateBattle(
     const gapTo = (a: Zone, b: Zone) =>
       a.bottom > b.top ? a.bottom - b.top : b.bottom > a.top ? b.bottom - a.top : 0;
     const centerDist = (z: Zone) => Math.abs(price - (z.top + z.bottom) / 2);
-    const obs = zones.filter((z) => z.kind === "OB");
-    let inZone: Zone | null = null;
-    const fvgs = inside.filter((z) => z.kind === "FVG");
-    if (fvgs.length) {
-      for (const z of fvgs) {
-        if (!inZone) {
-          inZone = z;
-          continue;
-        }
-        const best = inZone;
-        const dz = obs.length ? Math.min(...obs.map((o) => gapTo(z, o))) : centerDist(z);
-        const db = obs.length ? Math.min(...obs.map((o) => gapTo(best, o))) : centerDist(best);
-        if (dz < db) inZone = z;
-      }
-    } else {
-      for (const z of inside) {
-        if (!inZone || centerDist(z) < centerDist(inZone)) inZone = z;
-      }
-    }
-    if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+ const obs = zones.filter((z) => z.kind === "OB");
+ let inZone: Zone | null = null;
+ const fvgs = inside.filter((z) => z.kind === "FVG");
+ if (fvgs.length && obs.length) {
+ for (const z of fvgs) {
+ if (!inZone) {
+ inZone = z;
+ continue;
+ }
+ const best = inZone;
+ const dz = Math.min(...obs.map((o) => gapTo(z, o)));
+ const db = Math.min(...obs.map((o) => gapTo(best, o)));
+ if (dz < db) inZone = z;
+ }
+ } else {
+ for (const z of inside) {
+ if (z.kind !== "OB") continue;
+ if (!inZone||centerDist(z) < centerDist(inZone)) inZone = z;
+ }
+ }
+ if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
     zoneKey = zoneToKey(inZone);
     zoneStartT = last.t;
     funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
@@ -619,7 +620,10 @@ export function evaluateBattle(
   const startT = zoneStartT as number;
 
   // 窗口内：仅需 5m 触发（结构突破 / 吞没 / Pin Bar）。
-  const c2 = confirm2Indices(ltf, bias, startT, lastCloseT);
+  const span = opts.confirmSpanMax ?? CONFIRM_SPAN_MAX;
+  const c2 = confirm2Indices(ltf, bias, startT, lastCloseT).filter(
+    (c) => ltf[c.i].t - startT < span * LTF.sec,
+  );
   const c2T = c2.length ? ltf[c2[0].i]?.t ?? null : null;
   funnel = {
     zoneKey,
