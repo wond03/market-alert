@@ -80,6 +80,11 @@ export const scan = internalAction({
       let openTarget = state?.openTarget ?? null;
       let openTs = state?.openTs ?? null;
       let openSignalId = state?.openSignalId ?? null;
+      let openBackup = state?.openBackup ?? null;
+      let backupLevel = state?.backupLevel ?? null;
+      let backupArmT = state?.backupArmT ?? null;
+      let backupZone = state?.backupZone ?? null;
+      let openZone = state?.openZone ?? null;
 
       // 了结检查：影线触及止损或止盈 → 写入记录并解除。
       if (openTs != null && openDir) {
@@ -107,6 +112,15 @@ export const scan = internalAction({
               exitPrice: r.price,
               closedTs: r.ts,
             });
+          }
+          if (r.result === "stop" && !openBackup && openEntry != null) {
+           backupLevel = openEntry;
+           backupArmT = r.ts;
+           backupZone = openZone;
+          } else {
+           backupLevel = null;
+           backupArmT = null;
+           backupZone = null;
           }
           openDir = null;
           openEntry = null;
@@ -141,6 +155,9 @@ export const scan = internalAction({
                 closedTs: cutBar.t,
               });
             }
+            backupLevel = null;
+            backupArmT = null;
+            openBackup = null;
             openDir = null;
             openEntry = null;
             openStop = null;
@@ -155,6 +172,9 @@ const prev = {
   firedZone: state?.firedZone ?? "",
   zoneKey: state?.zoneKey ?? "",
   zoneStartT: state?.zoneStartT ?? null,
+  backupLevel,
+  backupArmT,
+  backupZone
 };
  const res = evaluateBattle(htf, mtf, ltf, prev, now, EXCHANGE, symbol, {
   zoneInvalidateMtf: true,
@@ -193,6 +213,11 @@ const prev = {
 
  let firedZone = res.firedZone;
       if (res.signal) {
+       openZone = res.zoneKey;
+       backupZone = null;
+       backupLevel = null;
+       backupArmT = null;
+       openBackup = res.signal.confirmInternal === "BOS";
         // 上一笔未了结信号仍在（新信号到来）→ 记为「被取代」。
         if (openTs != null && openDir) {
           await ctx.runMutation(internal.battle.insertOutcome, {
@@ -264,6 +289,11 @@ await ctx.runMutation(internal.battle.upsertState, {
         openTarget,
         openTs,
         openSignalId,
+        openBackup,
+        openZone,
+        backupLevel,
+        backupArmT,
+        backupZone,
         updatedAt: now,
       });
     }
@@ -297,6 +327,11 @@ export const upsertState = internalMutation({
     openTarget: v.union(v.number(), v.null()),
     openTs: v.union(v.number(), v.null()),
     openSignalId: v.union(v.id("battleSignals"), v.null()),
+    openBackup: v.union(v.boolean(), v.null()),
+    openZone: v.union(v.string(), v.null()),
+    backupLevel: v.union(v.number(), v.null()),
+    backupArmT: v.union(v.number(), v.null()),
+    backupZone: v.union(v.string(), v.null()),
     updatedAt: v.number(),
   },
   handler: async (ctx, args) => {

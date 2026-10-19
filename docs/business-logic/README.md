@@ -67,11 +67,11 @@ mindmap
 |---|---|---|---|
 | 1 方向 | 1h 摆动结构（摆动 4）最近 BOS 定 bull/bear，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` `:590` |
 | 2 区域 | 只用 15m 顺向未失效 OB（摆动 4） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:614` |
-| 3 入场 | 价格进入与 15m OB 重叠的 15m 同向 FVG 内入场；未进入 FVG 不进场 | `ZONE_BUF_ATR=0.15` | `battleCore.ts` `inEntry` |
-| 4 扫荡BOS | 15m 先扫前摆动点，12 根内出现同向 BOS 或 MSS/CHoCH，作为区域有效性硬条件 | `SWEEP_LOOKBACK=20`、`SWEEP_BOS_SPAN=12` | `battleCore.ts:36` `:401` |
-| 5 右侧 | 扫荡→MSS/BOS 确认；不要求入场 K 线颜色 | — | `battleCore.ts:664` |
-| 6 窗口 | 首次进入 OB 后持续跟踪，不设固定时间上限；15m 收盘穿过远端或方向变化才退出 | — | `battleCore.ts` `zoneInvalidated` |
-| 7 去重 | 同区域只推一次；失效后价格回来可重新布防 | `firedZone` | `battleCore.ts:684` |
+| 3 主单 | 价格进入 15m OB 即主单入场，不等 FVG/BOS；entry=近端 | `ZONE_BUF_ATR=0.15` | `battleCore.ts` `primary` |
+| 4 备用单 | 主单止损后等新的 15m BOS/MSS，回踩 OB 或同向 FVG 时入场 | — | `battleCore.ts` `backupHit` |
+| 5 兜底 | 备用单每段只打一次；方向失效或备用单止损后不补单 | — | `battleCore.ts` `backup` |
+| 6 窗口 | 初入 OB 主单立即成立；止损后备用单继续跟踪，15m 收盘穿过远端或方向变化才退出 | — | `battleCore.ts` `zoneInvalidated` |
+| 7 去重 | 主单同区域只推一次；备用单独立放行一次 | `firedZone` | `battleCore.ts:684` |
 | 8 风控 | entry=OB 近端，stop=远端±0.2ATR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:426` `buildRisk` |
 | 落库 | `battleSignals`、`battleOutcomes`、`battleState` | | `convex/battle.ts` |
 | 了结回填 | long 收盘≤stop 或最高≥target（short 反向），patch 信号 + 写 outcome | | `convex/battle.ts` `scan` |

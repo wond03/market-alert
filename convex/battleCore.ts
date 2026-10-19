@@ -47,6 +47,9 @@ export type BattleState = {
   firedZone: string; // 最近已推送的区域指纹；空串表示可重新布防
   zoneKey: string; // 当前窗口跟踪的区域指纹；空串 = 无活动窗口
   zoneStartT: number | null; // 首次入区所在的 5m K 开盘时间（UTC 秒）
+  backupLevel?: number | null; // 主单止损后，备用单等待回踩的价位
+  backupArmT?: number | null; // 备用单布防时间（主单止损所在 K 线收盘，UTC 秒）
+  backupZone?: string | null; // 备用单对应的区域指纹
 };
 
 
@@ -580,14 +583,33 @@ export function evaluateBattle(
  let firedZone = prev.firedZone;
  let funnel: FunnelInfo | null = null;
 
+ // 主单止损后：等新的 15m BOS，并在回踩时放行备用单。
+ const backupHit = (() => {
+   if (prev.backupLevel == null || prev.backupArmT == null || !prev.backupZone) return false;
+   const bosAfter = runStructure(mtf, HTF.swing).breaks.some(
+     (b) => (b.tag === "BOS" || b.tag === "CHoCH") && b.dir === bias && b.t >= (prev.backupArmT as number),
+   );
+   if (!bosAfter) return false;
+   const ft = computeFvgs(mtf).some(
+     (f) => f.dir === bias && f.mitigatedIdx === null && price >= f.bottom - fbuf && price <= f.top + fbuf,
+   );
+   return ft || Math.abs(price - prev.backupLevel) <= fbuf;
+ })();
+ if (backupHit) {
+   zoneKey = prev.backupZone as string;
+   zoneStartT = prev.backupArmT as number;
+ }
+
  // 方向变化：跟踪的区域作废，清窗口（去重指纹保留，由失效判据决定是否重置）。
  if (zoneKey && zoneKey.split("#")[0] !== bias) {
  zoneKey = "";
  zoneStartT = null;
  }
 
- if (zoneKey && zoneStartT != null) {
- const z = parseZoneKey(zoneKey)!;
+ if (!backupHit && zoneKey && zoneStartT != null) {
+ if (!zoneKey) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+ const z = parseZoneKey(zoneKey);
+ if (!z) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
  const invalid = zoneInvalidated(
  mtf,
  zoneStartT,
@@ -603,7 +625,7 @@ export function evaluateBattle(
  }
 
  // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
- if (!zoneKey) {
+ if (!backupHit && !zoneKey) {
  const buf = ZONE_BUF_ATR * ltfAtr;
  const zones = battleZones(mtf, bias, opts.obMitigation ?? "close", HTF.swing);
  const inside = zones.filter(
@@ -622,19 +644,17 @@ export function evaluateBattle(
  funnel = { zoneKey, zoneStartT: lastCloseT, c1T: null, c2T: null, confirmed: false };
  }
 
- const z = parseZoneKey(zoneKey)!;
+ if (!zoneKey) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+ const z = parseZoneKey(zoneKey);
+ if (!z) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
  const startT = zoneStartT as number;
 
- // 15m OB 内等待 15m FVG 入场；15m 先扫荡后 BOS/MSS 为硬条件。
-  const inEntry = computeFvgs(mtf).some(
- (f) =>
- f.dir === bias &&
- f.mitigatedIdx === null &&
- price >= f.bottom - fbuf &&
- price <= f.top + fbuf,
- );
+
  const lastM = mtf[mtf.length - 1];
- const trig = sb.bos && inEntry;
+ const primFired = firedZone === zoneKey;
+ const primary = !primFired;
+ const backup = backupHit;
+ const trig = primary || backup;
  const c2T = sb.bosIdx != null ? mtf[sb.bosIdx]?.t ?? null : null;
  funnel = {
  zoneKey,
@@ -646,13 +666,15 @@ export function evaluateBattle(
  gap: null,
  c1n: sb.swept ? 1 : 0,
  c2n: sb.bos ? 1 : 0,
- c2Kind: trig ? "FVG" : null,
+ c2Kind: trig ? (backup ? "回踩" : "OB") : null,
  };
  if (!trig) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
- const pair = { confirm: "FVG·右侧", confirmInternal: "FVG" };
+ const pair = backup
+ ? { confirm: "BOS回踩·右侧", confirmInternal: "BOS" }
+ : { confirm: "OB·左侧", confirmInternal: "OB" };
 
- // 当天去重：同一区域只推一次。
-  if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+ // 同一区域主单只推一次；备用单独立放行。
+  if (firedZone === zoneKey && !backup) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
   const dirTag = dirLast ? dirLast.tag : "结构";
   const dirLevel = dirLast ? dirLast.level : z.top;

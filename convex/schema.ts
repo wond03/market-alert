@@ -14,6 +14,11 @@ export default defineSchema({
     openStop: v.optional(v.union(v.number(), v.null())),
     openTarget: v.optional(v.union(v.number(), v.null())),
     openTs: v.optional(v.union(v.number(), v.null())), // 未了结信号触发时间
+ openBackup: v.optional(v.union(v.boolean(), v.null())), // 未了结信号是否为备用单
+ backupLevel: v.optional(v.union(v.number(), v.null())), // 备用单等待回踩的价位
+ backupArmT: v.optional(v.union(v.number(), v.null())), // 备用单布防时间
+ backupZone: v.optional(v.union(v.string(), v.null())), // 备用单对应区域
+ openZone: v.optional(v.union(v.string(), v.null())), // 未了结信号所属区域
     openSignalId: v.optional(v.union(v.id("battleSignals"), v.null())), // 未了结信号对应的信号记录 _id
     updatedAt: v.number(),
   }).index("by_key", ["key"]),

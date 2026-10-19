@@ -84,6 +84,8 @@ async function runSymbol(sym: string): Promise<Rec[]> {
   }
   const states: Record<string, BattleState> = {};
   for (const cfg of CONFIGS) states[cfg.label] = { firedZone: "", zoneKey: "", zoneStartT: null };
+  const pending: Record<string, { entry: number; stop: number; target: number | null; dir: string; zone: string } | null> = {};
+  for (const cfg of CONFIGS) pending[cfg.label] = null;
 
   const recs: Rec[] = [];
   for (let j = 0; j < c5.length; j++) {
@@ -101,7 +103,26 @@ async function runSymbol(sym: string): Promise<Rec[]> {
       confirmSpanMax: cfg.span,
       obMitigation: cfg.ob,
     });
-      states[cfg.label] = { firedZone: res.firedZone, zoneKey: res.zoneKey, zoneStartT: res.zoneStartT };
+      const st = states[cfg.label];
+      if (res.signal) {
+        pending[cfg.label] = { entry: res.signal.entryPrice, stop: res.signal.stopPrice, target: res.signal.targetPrice, dir: res.signal.bias, zone: res.zoneKey };
+        st.backupLevel = null;
+        st.backupArmT = null;
+      } else if (pending[cfg.label]) {
+        const p = pending[cfg.label]!;
+        const bar = c5[j];
+        const stopHit = p.dir === "long" ? bar.l <= p.stop : bar.h >= p.stop;
+        const tgtHit = p.target != null && (p.dir === "long" ? bar.h >= p.target : bar.l <= p.target);
+        if (stopHit) {
+          st.backupLevel = p.entry;
+          st.backupArmT = tClose;
+          st.backupZone = p.zone;
+          pending[cfg.label] = null;
+        } else if (tgtHit) {
+          pending[cfg.label] = null;
+        }
+      }
+      states[cfg.label] = { firedZone: res.firedZone, zoneKey: res.zoneKey, zoneStartT: res.zoneStartT, backupLevel: st.backupLevel ?? null, backupArmT: st.backupArmT ?? null, backupZone: st.backupZone ?? null };
       const sig = res.signal;
       if (!sig) continue;
       const { rGross, why } = simulate(
