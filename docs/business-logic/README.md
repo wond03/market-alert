@@ -14,7 +14,7 @@ mindmap
     后端 Convex
       猎场信号面板 battle
         1h BOS 定方向 摆动4
-        1h OB 定区域 摆动4
+        15m OB 定区域 摆动4
         15m FVG 入场
         15m 扫荡后 BOS 硬条件
         15m 右侧确认 6h 窗口 60m 触发
@@ -66,8 +66,8 @@ mindmap
 | 步骤 | 内容 | 常量 | 代码位置 |
 |---|---|---|---|
 | 1 方向 | 1h 摆动结构（摆动 4）最近 BOS 定 bull/bear，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` `:590` |
-| 2 区域 | 只用 1h 顺向未失效 OB（摆动 4） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:614` |
-| 3 入场 | 价格进入与 OB 重叠的 15m 同向 FVG 内入场；未进入 FVG 不进场 | `ZONE_BUF_ATR=0.15` | `battleCore.ts` `inEntry` |
+| 2 区域 | 只用 15m 顺向未失效 OB（摆动 4） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:614` |
+| 3 入场 | 价格进入与 15m OB 重叠的 15m 同向 FVG 内入场；未进入 FVG 不进场 | `ZONE_BUF_ATR=0.15` | `battleCore.ts` `inEntry` |
 | 4 扫荡BOS | 15m 先扫前摆动点，12 根内出现同向 BOS 或 MSS/CHoCH，作为区域有效性硬条件 | `SWEEP_LOOKBACK=20`、`SWEEP_BOS_SPAN=12` | `battleCore.ts:36` `:401` |
 | 5 右侧 | 扫荡→MSS/BOS 确认；不要求入场 K 线颜色 | — | `battleCore.ts:664` |
 | 6 窗口 | 首次进入 OB 后持续跟踪，不设固定时间上限；15m 收盘穿过远端或方向变化才退出 | — | `battleCore.ts` `zoneInvalidated` |

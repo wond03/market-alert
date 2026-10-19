@@ -605,7 +605,7 @@ export function evaluateBattle(
  // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
  if (!zoneKey) {
  const buf = ZONE_BUF_ATR * ltfAtr;
- const zones = battleZones(htf, bias, opts.obMitigation ?? "close", HTF.swing);
+ const zones = battleZones(mtf, bias, opts.obMitigation ?? "close", HTF.swing);
  const inside = zones.filter(
  (z) => price >= z.bottom - buf && price <= z.top + buf,
  );
@@ -625,7 +625,7 @@ export function evaluateBattle(
  const z = parseZoneKey(zoneKey)!;
  const startT = zoneStartT as number;
 
- // 1h OB 内等待 15m FVG 入场；15m 先扫荡后 BOS 为硬条件。
+ // 15m OB 内等待 15m FVG 入场；15m 先扫荡后 BOS/MSS 为硬条件。
   const inEntry = computeFvgs(mtf).some(
  (f) =>
  f.dir === bias &&
