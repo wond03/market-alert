@@ -70,7 +70,7 @@ mindmap
 | 3 入场 | 入区后新形成的 15m 同向 FVG 内入场；不要求与 OB 重叠；未出现 FVG 时继续等待 | `ZONE_BUF_ATR=0.15` | `battleCore.ts` `inEntry` |
 | 4 扫荡BOS | 15m 先扫前摆动点，12 根内出现同向 BOS 或 MSS/CHoCH，作为区域有效性硬条件 | `SWEEP_LOOKBACK=20`、`SWEEP_BOS_SPAN=12` | `battleCore.ts:36` `:401` |
 | 5 右侧 | 最近一根收盘 15m 须顺势；与入场同完成 | — | `battleCore.ts:664` |
-| 6 窗口 | 首次进入 OB 后持续跟踪，不设固定时间上限；区域失效或方向变化才退出 | — | `battleCore.ts` `zoneInvalidated` |
+| 6 窗口 | 首次进入 OB 后持续跟踪，不设固定时间上限；15m 收盘穿过远端或方向变化才退出 | — | `battleCore.ts` `zoneInvalidated` |
 | 7 去重 | 同区域只推一次；失效后价格回来可重新布防 | `firedZone` | `battleCore.ts:684` |
 | 8 风控 | entry=OB 近端，stop=远端±0.2ATR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:426` `buildRisk` |
 | 落库 | `battleSignals`、`battleOutcomes`、`battleState` | | `convex/battle.ts` |

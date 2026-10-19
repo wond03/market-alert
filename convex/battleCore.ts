@@ -589,11 +589,11 @@ export function evaluateBattle(
  if (zoneKey && zoneStartT != null) {
  const z = parseZoneKey(zoneKey)!;
  const invalid = zoneInvalidated(
- opts.zoneInvalidateMtf ? mtf : ltf,
+ mtf,
  zoneStartT,
  lastCloseT,
  z,
- opts.zoneInvalidateMtf ? MTF.sec : LTF.sec,
+ MTF.sec,
  );
  if (invalid) {
  if (firedZone === zoneKey) firedZone = "";
