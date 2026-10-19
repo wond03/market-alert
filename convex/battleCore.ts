@@ -593,7 +593,8 @@ export function evaluateBattle(
  const obs = zones.filter((z) => z.kind === "OB");
  let inZone: Zone | null = null;
  const fvgs = inside.filter((z) => z.kind === "FVG");
- if (fvgs.length && obs.length) {
+ if (fvgs.length) {
+ if (obs.length) {
  for (const z of fvgs) {
  if (!inZone) {
  inZone = z;
@@ -603,6 +604,11 @@ export function evaluateBattle(
  const dz = Math.min(...obs.map((o) => gapTo(z, o)));
  const db = Math.min(...obs.map((o) => gapTo(best, o)));
  if (dz < db) inZone = z;
+ }
+ } else {
+ for (const z of fvgs) {
+ if (!inZone || centerDist(z) < centerDist(inZone)) inZone = z;
+ }
  }
  } else {
  for (const z of inside) {
