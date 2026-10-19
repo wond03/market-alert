@@ -242,18 +242,13 @@ export function battleZones(
 ): Zone[] {
   const swing = runStructure(candles, swingLen, "atr", obMitigation);
   const atrArr = atr(candles, ATR_LEN);
-  const fvgs = computeFvgs(candles);
   const zones: Zone[] = [];
   for (const o of swing.orderBlocks) {
     if (o.mitigatedIdx === null && o.bias === bias) {
       zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
     }
   }
-  for (const f of fvgs) {
-    if (f.mitigatedIdx === null && f.dir === bias) {
-      zones.push({ kind: "FVG", bias, top: f.top, bottom: f.bottom, idx: f.idx, t: f.t });
-    }
-  }
+  
   const seen = new Set<string>();
   return zones.filter((z) => {
     if (!hasDisplacement(candles, z, atrArr)) return false;
@@ -620,26 +615,12 @@ export function evaluateBattle(
  for (const z of inside) {
  if (!inZone||centerDist(z) < centerDist(inZone)) inZone = z;
  }
- if (!inZone) {
- // 价格先进入与 OB 重叠的 15m FVG 时，也可开启窗口。
- const fvgs = computeFvgs(mtf).filter(
- (f) =>
- f.dir === bias &&
- f.mitigatedIdx === null &&
- price >= f.bottom - fbuf &&
- price <= f.top + fbuf,
- );
- for (const z of zones) {
- if (fvgs.some((f) => f.bottom <= z.top && f.top >= z.bottom)) {
- inZone = z;
- break;
- }
- }
- }
- if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+ const pz = prev.zoneKey ? zones.find((z) => zoneToKey(z) === prev.zoneKey) : undefined;
+  if (!inZone && pz) inZone = pz;
+  if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
  zoneKey = zoneToKey(inZone);
- zoneStartT = last.t;
- funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
+ zoneStartT = lastCloseT;
+ funnel = { zoneKey, zoneStartT: lastCloseT, c1T: null, c2T: null, confirmed: false };
  }
 
  const z = parseZoneKey(zoneKey)!;
@@ -647,12 +628,10 @@ export function evaluateBattle(
 
  // 1h OB 内等待 15m FVG 入场；15m 先扫荡后 BOS 为硬条件。
  const span = opts.confirmSpanMax ?? CONFIRM_SPAN_MAX;
- const inEntry = computeFvgs(mtf).some(
+  const inEntry = computeFvgs(mtf).some(
  (f) =>
  f.dir === bias &&
  f.mitigatedIdx === null &&
- f.bottom <= z.top &&
- f.top >= z.bottom &&
  price >= f.bottom - fbuf &&
  price <= f.top + fbuf,
  );
