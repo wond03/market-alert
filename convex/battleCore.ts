@@ -392,7 +392,7 @@ export function sweepThenBos(
         bias === "bull" ? c.l < p.price && c.c > p.price : c.h > p.price && c.c < p.price;
       if (!hit) continue;
       const bos = st.breaks.find(
-        (b) => b.idx > i && b.idx <= i + SWEEP_BOS_SPAN && b.dir === bias && b.tag === "BOS",
+        (b) => b.idx > i && b.idx <= i + SWEEP_BOS_SPAN && b.dir === bias && (b.tag === "BOS" || b.tag === "CHoCH"),
       );
       if (bos) return { swept: true, bos: true, level: p.price, sweepIdx: i, bosIdx: bos.idx };
     }
