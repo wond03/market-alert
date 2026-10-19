@@ -588,7 +588,6 @@ export function evaluateBattle(
 
  if (zoneKey && zoneStartT != null) {
  const z = parseZoneKey(zoneKey)!;
- const expired = lastCloseT - zoneStartT > (opts.zoneWindowSec ?? ZONE_WINDOW_SEC);
  const invalid = zoneInvalidated(
  opts.zoneInvalidateMtf ? mtf : ltf,
  zoneStartT,
@@ -596,7 +595,7 @@ export function evaluateBattle(
  z,
  opts.zoneInvalidateMtf ? MTF.sec : LTF.sec,
  );
- if (expired||invalid) {
+ if (invalid) {
  if (firedZone === zoneKey) firedZone = "";
  zoneKey = "";
  zoneStartT = null;
@@ -627,7 +626,6 @@ export function evaluateBattle(
  const startT = zoneStartT as number;
 
  // 1h OB 内等待 15m FVG 入场；15m 先扫荡后 BOS 为硬条件。
- const span = opts.confirmSpanMax ?? CONFIRM_SPAN_MAX;
   const inEntry = computeFvgs(mtf).some(
  (f) =>
  f.dir === bias &&
@@ -637,8 +635,7 @@ export function evaluateBattle(
  );
  const lastM = mtf[mtf.length - 1];
  const right = !!lastM && (bias === "bull" ? lastM.c > lastM.o : lastM.c < lastM.o);
- const fresh = lastCloseT - startT < span * LTF.sec;
- const trig = sb.bos && inEntry && right && fresh;
+ const trig = sb.bos && inEntry && right;
  const c2T = sb.bosIdx != null ? mtf[sb.bosIdx]?.t ?? null : null;
  funnel = {
  zoneKey,
