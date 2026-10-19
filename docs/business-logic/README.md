@@ -1,7 +1,7 @@
 # 猎场 Vantage 业务逻辑总览
 
-> 更新日期：2026-10-17
-> 定位：猎场 Vantage — Gate 合约行情看盘 + Telegram 告警。盯 BTC / XAU 两个品种，图表给前端，信号推手机。
+> 更新日期：2026-10-19
+> 定位：猎场 Vantage — Gate 合约行情看盘 + Telegram 告警 + WEEX 模拟盘自动下单。盯 BTC / XAU 两个品种，图表给前端，信号推手机。
 
 ## 思维导图
 
@@ -13,12 +13,13 @@ mindmap
       品种 BTC XAU
     后端 Convex
       猎场信号面板 battle
-        1h 背景偏置
-        15m 日内方向
-        OB FVG 入区
-        统一确认窗口 24 根15m
-        5m 触发确认
+        1h 背景偏置 摆动4
+        15m 日内方向 摆动16
+        OB FVG 入区 FVG优先
+        6h 窗口 60m 触发
+        5m 触发 右侧确认
         buildRisk 止损止盈RR
+        交易所止损止盈条件单
         表 battleSignals battleOutcomes battleState
         了结回填结果
         Telegram 通知
@@ -64,17 +65,18 @@ mindmap
 
 | 步骤 | 内容 | 常量 | 代码位置 |
 |---|---|---|---|
-| 1 背景 | 1h 结构定 bull/bear/range，反向收盘作废 | `HTF.swing=8` | `battleCore.ts:420` |
-| 2 方向 | 15m 摆动 BOS/CHoCH，须日内且带位移 | `DISP_MULT=1.5` | `battleCore.ts:441` |
-| 3 入区 | 价格进入顺向 15m OB/FVG | `ZONE_BUF_ATR=0.15` | `battleCore.ts:483` |
-| 4 窗口 | 统一确认窗口，5m 收盘穿远端即失效 | `ZONE_WINDOW_BARS=24` | `battleCore.ts:475` |
-| 5 确认 | 确认1=15m 内部结构；确认2=5m 触发；须同窗且索引差≤span | `CONFIRM_SPAN_MAX=6` | `battleCore.ts:499` |
-| 6 去重 | 同区域当天只推一次 | `firedZone` | `battleCore.ts:505` |
-| 7 风控 | entry/stop/target/RR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:311` `buildRisk` |
+| 1 背景 | 1h 摆动结构定 bull/bear/range，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` |
+| 2 方向 | 15m 摆动 BOS/CHoCH（摆动 16），须日内且带位移 | `MTF_DIR_SWING=16`、`DISP_MULT=1.5` | `battleCore.ts:24` `:534` |
+| 3 入区 | 价格回到顺向未失效 15m OB/FVG；FVG 优先，多个取离 OB 最近，无 OB 取离价最近 | `ZONE_BUF_ATR=0.15` | `battleCore.ts:586` |
+| 4 窗口 | 首次入区起 6h，5m 收盘穿远端即失效 | `ZONE_WINDOW_BARS=24` | `battleCore.ts:27` |
+| 5 触发 | 5m 结构突破 / 吞没 / Pin Bar，须入区后 60 分钟内 | `CONFIRM_SPAN_MAX=12` | `battleCore.ts:30` |
+| 6 右侧 | 触发后下一根 5m 须顺势收盘且越过触发收盘价 | — | `battleCore.ts:633` |
+| 7 去重 | 同区域只推一次；失效后价格回来可重新布防 | `firedZone` | `battleCore.ts:650` |
+| 8 风控 | entry=区域近端，stop=远端±0.2ATR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:380` `buildRisk` |
 | 落库 | `battleSignals`、`battleOutcomes`、`battleState` | | `convex/battle.ts` |
 | 了结回填 | long 收盘≤stop 或最高≥target（short 反向），patch 信号 + 写 outcome | | `convex/battle.ts` `scan` |
-| 推送 | 每个新信号一条 Telegram（仅通知） | | `convex/battle.ts` |
-| 开关 | `BATTLE=1`（仅 prod） | | `convex/battle.ts` |
+| 推送 | 每个新信号一条 Telegram，并触发 WEEX 市价单；成交后挂交易所止损/止盈条件单 | | `convex/battle.ts`、`convex/weex.ts` |
+| 开关 | `BATTLE=1`、`WEEX_AUTO=1`（仅 prod） | | `convex/battle.ts`、`convex/weex.ts` |
 
 ## 3. 线C 周报
 
@@ -95,6 +97,7 @@ mindmap
 | cron | `signal weekly report`（周一） | 周报 |
 | env | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` | 推送 |
 | env | `BATTLE`（prod=1） | 猎场信号面板开关 |
+| env | `WEEX_AUTO`、`WEEX_MARGIN_USDT`、`WEEX_LEVERAGE`、`WEEX_BASE_URL` | WEEX 模拟盘自动下单与交易所止损止盈 |
 
 ## 5. 前端看盘页
 
@@ -119,7 +122,7 @@ mindmap
 ## 7. 猎场信号面板回测验收（2026-10-16）
 
 工具 `backtest/battle.ts`（复用生产 `evaluateBattle`；MTF 15m / LTF 5m；前瞻 24h；net 已扣 10bps 往返）。
-样本 Gate `BTC`/`XAU` 5m 近 ~31 天（09-14 → 10-15）。生产口径 = 窗口 24 根 15m、span 6。
+样本 Gate `BTC`/`XAU` 5m 近 ~31 天（09-14 → 10-15）。回测时旧口径 = 窗口 24 根 15m、span 6，未含 60 分钟触发上限与右侧确认。
 
 | 指标 | 值 |
 |---|---|

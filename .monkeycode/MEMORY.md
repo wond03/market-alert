@@ -4,6 +4,8 @@
 
 ## 用户指令
 
+- 需求来源（2026-10-19）：用户会把待改问题/要求直接写进 `market-alert-handbook` 的 `信号逻辑与参数.md`；每次先拉取该文件最新版本，按文中标注直接实现并部署，手册本身仍由用户提交。
+- 提交方式（2026-10-19）：用户会直接在 GitHub 上提交/更新文档与代码；每次开工前先 `git pull --ff-only` 同步 `master`，手册类改动用 GitHub raw/API 拉最新提交，以远端为准，再改代码。
 - 汇报方式（2026-10-19）：看板只放状态与一句话结论并发 8020 链接；详细数据写工作区文件并发路径；少量数字直接贴文本；逐笔 CSV 只发路径不贴全文。不每次新建页面。
 - 仓库维护（2026-10-12~14）：本仓库 `wond03/market-alert`（public）由 Agent 维护，改动推 `master`；`market-dashboard/**` 变更后 Pages 自动重部署；仓库是页面托管与源码唯一存放处。
 - 安全：禁止任何密钥/口令入库（`RULES_SECRET`、`TELEGRAM_BOT_TOKEN`、各类 API key），`.env.local` 已 gitignore，推送前自查。

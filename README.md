@@ -1,15 +1,15 @@
 # 猎场 Vantage
 
-Gate.io 合约（BTC / XAU）看盘 + SMC 入场信号通知 + 账户级绩效报表。
+Gate.io 合约（BTC / XAU）看盘 + SMC 入场信号通知 + WEEX 模拟盘自动下单 + 账户级绩效报表。
 
 ## 能做什么
 
 - **看盘页**：K 线 + SMC 结构叠加（BOS / CHoCH、订单块 OB、公允价值缺口 FVG、交易时段框、流动性扫荡）。
-- **猎场信号面板**：每分钟扫描，按「1h 背景 → 15m 方向 → 入区 → 5m 同向确认」判定入场，命中后写库并推送 Telegram。
+- **猎场信号面板**：每分钟扫描，按「1h 背景 → 15m 方向 → 入区 → 5m 触发 → 右侧确认」判定入场，命中后写库、推送 Telegram 并自动下单。
 - **报表页**：按模拟账户口径（本金 100U、名义 500U、杠杆 100x、每笔保证金 5U、双边 taker 0.05%）展示期望值、R 倍数分布、周 / 月回撤、信号分层通过率漏斗与逐笔明细。
 - **周报**：以报表页展示，不再推送 Telegram。
 
-Telegram 仅作通知，不参与交易执行。
+Telegram 仅作通知；交易由 WEEX 模拟盘自动执行，成交后即时挂交易所止损/止盈条件单。
 
 ## 技术栈
 
@@ -40,7 +40,7 @@ python3 -m http.server 8000 --directory ./market-dashboard
 
 | 路径 | 说明 |
 | --- | --- |
-| `convex/` | 后端：`battle`（入场信号）、`report`（报表）、`panel`（只读接口）、`luxSmc`/`battleCore`（纯逻辑）、`gate`/`exchanges`（行情）、`telegram`（推送） |
+| `convex/` | 后端：`battle`（入场信号）、`report`（报表）、`panel`（只读接口）、`luxSmc`/`battleCore`（纯逻辑）、`gate`/`exchanges`（行情）、`telegram`（推送）、`weex`（自动下单） |
 | `market-dashboard/` | 前端：`index.html`（看盘页）、`report.html`（报表页） |
 | `backtest/` | 离线回测（复用生产逻辑） |
 | `docs/business-logic/` | 业务逻辑总览 |
