@@ -234,38 +234,20 @@ function rangeGap(aLo: number, aHi: number, bLo: number, bHi: number): number {
   return 0;
 }
 
-// IFVG 失效：订单块邻近的同向 FVG 被收盘反向穿越后，订单块视为撑不住。
-function obInvalidatedByIfvg(
-  candles: Candle[],
-  ob: { bias: Bias; idx: number; high: number; low: number },
-  fvgs: ReturnType<typeof computeFvgs>,
-  atrVal: number,
-): boolean {
-  const tol = (isFinite(atrVal) ? atrVal : 0) * 0.25;
-  for (const f of fvgs) {
-    if (f.dir !== ob.bias) continue;
-    const gap = rangeGap(f.bottom, f.top, ob.low, ob.high);
-    if (gap > tol) continue;
-    for (let k = Math.max(f.idx, ob.idx) + 1; k < candles.length; k++) {
-      if (ob.bias === "bull" ? candles[k].c < f.bottom : candles[k].c > f.top) return true;
-    }
-  }
-  return false;
-}
-
 export function battleZones(
   candles: Candle[],
   bias: Bias,
   obMitigation: "wick" | "close" = "close",
+  swingLen = SWING_LEN,
 ): Zone[] {
-  const swing = runStructure(candles, SWING_LEN, "atr", obMitigation);
+  const swing = runStructure(candles, swingLen, "atr", obMitigation);
   const atrArr = atr(candles, ATR_LEN);
   const fvgs = computeFvgs(candles);
   const zones: Zone[] = [];
   for (const o of swing.orderBlocks) {
-    if (o.mitigatedIdx !== null || o.bias !== bias) continue;
-    if (obInvalidatedByIfvg(candles, o, fvgs, atrArr[o.idx] ?? atrArr[atrArr.length - 1])) continue;
-    zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
+    if (o.mitigatedIdx === null && o.bias === bias) {
+      zones.push({ kind: "OB", bias, top: o.high, bottom: o.low, idx: o.idx, t: o.t });
+    }
   }
   for (const f of fvgs) {
     if (f.mitigatedIdx === null && f.dir === bias) {
@@ -629,7 +611,7 @@ export function evaluateBattle(
  // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
  if (!zoneKey) {
  const buf = ZONE_BUF_ATR * ltfAtr;
- const zones = battleZones(htf, bias, opts.obMitigation ?? "close");
+ const zones = battleZones(htf, bias, opts.obMitigation ?? "close", HTF.swing);
  const inside = zones.filter(
  (z) => price >= z.bottom - buf && price <= z.top + buf,
  );
