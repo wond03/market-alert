@@ -634,8 +634,7 @@ export function evaluateBattle(
  price <= f.top + fbuf,
  );
  const lastM = mtf[mtf.length - 1];
- const right = !!lastM && (bias === "bull" ? lastM.c > lastM.o : lastM.c < lastM.o);
- const trig = sb.bos && inEntry && right;
+ const trig = sb.bos && inEntry;
  const c2T = sb.bosIdx != null ? mtf[sb.bosIdx]?.t ?? null : null;
  funnel = {
  zoneKey,
