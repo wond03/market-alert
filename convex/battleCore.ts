@@ -630,7 +630,23 @@ export function evaluateBattle(
   const c2 = confirm2Indices(ltf, bias, startT, lastCloseT).filter(
     (c) => ltf[c.i].t - startT < span * LTF.sec,
   );
-  const c2T = c2.length ? ltf[c2[0].i]?.t ?? null : null;
+  // 右侧确认：触发后下一根 5m 必须顺势收盘并继续朝信号方向。
+  let trig: (typeof c2)[number] | null = null;
+  let rightT: number | null = null;
+  for (const c of c2) {
+    const j = c.i + 1;
+    if (j >= ltf.length) break;
+    if (ltf[j].t - startT >= span * LTF.sec) break;
+    const tc = ltf[c.i];
+    const nc = ltf[j];
+    const ok =
+      bias === "bull" ? nc.c > nc.o && nc.c > tc.c : nc.c < nc.o && nc.c < tc.c;
+    if (!ok) continue;
+    trig = c;
+    rightT = nc.t;
+    break;
+  }
+  const c2T = trig && rightT != null ? rightT : c2.length ? ltf[c2[0].i]?.t ?? null : null;
   funnel = {
     zoneKey,
     zoneStartT: startT,
@@ -641,10 +657,10 @@ export function evaluateBattle(
     gap: c2.length ? 0 : null,
     c1n: 0,
     c2n: c2.length,
-    c2Kind: c2[0]?.kind ?? null,
+    c2Kind: (trig ?? c2[0])?.kind ?? null,
   };
-  if (!c2.length) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
-  const pair = { confirm: c2[0].label, confirmInternal: c2[0].kind };
+  if (!trig) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+  const pair = { confirm: `${trig.label}·右侧`, confirmInternal: trig.kind };
 
   // 当天去重：同一区域只推一次。
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
@@ -670,7 +686,7 @@ export function evaluateBattle(
       rr: risk.rr,
       sweep: sweep.swept,
       sweepLevel: sweep.level,
-      sigTs: last.t,
+      sigTs: rightT ?? last.t,
       text: buildMessage(
         exchange,
         symbol,
