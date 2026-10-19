@@ -162,6 +162,7 @@ export const placeSignalOrder = internalAction({
 
     try {
       if (await hasOpenPosition(contract)) {
+        await sendTelegram(`${contract} 已有持仓，本次信号跳过自动下单`);
         return { skipped: `position exists ${contract}` };
       }
       const [price, spec] = await Promise.all([
@@ -181,7 +182,7 @@ export const placeSignalOrder = internalAction({
         positionSide: long ? "LONG" : "SHORT",
         type: "MARKET",
         quantity: quantity.toFixed(spec.precision),
-        newClientOrderId: `s${args.signalId}`.slice(0, 36),
+        newClientOrderId: `smc-${args.signalId}`.slice(0, 36),
       });
       const rows = dataOf(payload);
       const order = Array.isArray(rows) ? rows[0] : rows;
@@ -195,7 +196,8 @@ export const placeSignalOrder = internalAction({
         [
           `${long ? "多" : "空"} ${contract} 自动入场`,
           `${margin}U x${leverage} @ ~${roundPrice(price, 2)} 数量 ${quantity}`,
-          `参考止损 ${stopPrice}　参考止盈 ${targetPrice}`,
+          `实际保证金约 ${(quantity * price / leverage).toFixed(2)}U`,
+          `参考止损 ${stopPrice}　参考止盈 ${targetPrice}（未挂单）`,
           `订单 ${orderId}，止盈止损由你手动设置`,
         ].join("\n"),
       );

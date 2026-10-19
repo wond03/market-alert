@@ -18,10 +18,10 @@ import {
 } from "./luxSmc";
 import * as gate from "./gate";
 
-export const HTF = { tf: "1h", sec: 3600, swing: SWING_LEN }; // 背景：只定偏置与流动性
+export const HTF = { tf: "1h", sec: 3600, swing: 4 }; // 背景：只定偏置与流动性
 export const MTF = { tf: "15m", sec: 900 }; // 日内方向 + 入区
 export const LTF = { tf: "5m", sec: 300 }; // 入场确认（仅展示）
-export const MTF_DIR_SWING = SWING_LEN; // 15m 日内方向的结构 size（摆动结构，定方向）
+export const MTF_DIR_SWING = 16; // 15m 日内方向的结构 size（摆动结构，定方向）
 
 // 统一确认窗口：自「首次入区」起算的最大时长，窗口内必须同时出现过入区、确认1、确认2，且区域未失效。
 export const ZONE_WINDOW_BARS = 24; // 24 根 15m
@@ -108,12 +108,12 @@ export function hasDisplacement(
 
 // ---- 统一确认窗口辅助 ----
 function zoneToKey(z: Zone): string {
-  return `${z.bias}#${z.kind}#${z.idx}#${z.bottom}#${z.top}`;
+  return `${z.bias}#${z.kind}#${z.t}#${z.bottom}#${z.top}`;
 }
 function parseZoneKey(key: string): Zone | null {
   const p = key.split("#");
   if (p.length < 5) return null;
-  return { bias: p[0] as Bias, kind: p[1] as Zone["kind"], idx: Number(p[2]), bottom: Number(p[3]), top: Number(p[4]), t: 0 };
+  return { bias: p[0] as Bias, kind: p[1] as Zone["kind"], idx: 0, bottom: Number(p[3]), top: Number(p[4]), t: Number(p[2]) };
 }
 // 区域失效：窗口内任一 5m 收盘价穿过远端边界（做多=收盘 < 下沿；做空=收盘 > 上沿）。
 function zoneInvalidated(candles: Candle[], startT: number, lastCloseT: number, z: Zone, tfSec: number): boolean {
@@ -583,16 +583,36 @@ export function evaluateBattle(
   // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
   if (!zoneKey) {
     const buf = ZONE_BUF_ATR * ltfAtr;
+    const zones = battleZones(mtf, bias, opts.obMitigation ?? "close");
+    const inside = zones.filter(
+      (z) => price >= z.bottom - buf && price <= z.top + buf,
+    );
+    const gapTo = (a: Zone, b: Zone) =>
+      a.bottom > b.top ? a.bottom - b.top : b.bottom > a.top ? b.bottom - a.top : 0;
+    const centerDist = (z: Zone) => Math.abs(price - (z.top + z.bottom) / 2);
+    const obs = zones.filter((z) => z.kind === "OB");
     let inZone: Zone | null = null;
-    for (const z of battleZones(mtf, bias, opts.obMitigation ?? "close")) {
-      if (price >= z.bottom - buf && price <= z.top + buf) {
-        if (!inZone || Math.abs(price - (z.top + z.bottom) / 2) < Math.abs(price - (inZone.top + inZone.bottom) / 2)) inZone = z;
+    const fvgs = inside.filter((z) => z.kind === "FVG");
+    if (fvgs.length) {
+      for (const z of fvgs) {
+        if (!inZone) {
+          inZone = z;
+          continue;
+        }
+        const best = inZone;
+        const dz = obs.length ? Math.min(...obs.map((o) => gapTo(z, o))) : centerDist(z);
+        const db = obs.length ? Math.min(...obs.map((o) => gapTo(best, o))) : centerDist(best);
+        if (dz < db) inZone = z;
+      }
+    } else {
+      for (const z of inside) {
+        if (!inZone || centerDist(z) < centerDist(inZone)) inZone = z;
       }
     }
-  if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
-  zoneKey = zoneToKey(inZone);
-  zoneStartT = last.t;
-  funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
+    if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
+    zoneKey = zoneToKey(inZone);
+    zoneStartT = last.t;
+    funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
   }
 
   const z = parseZoneKey(zoneKey)!;
@@ -615,7 +635,6 @@ export function evaluateBattle(
   };
   if (!c2.length) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
   const pair = { confirm: c2[0].label, confirmInternal: c2[0].kind };
-  if (!pair) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
 
   // 当天去重：同一区域只推一次。
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
