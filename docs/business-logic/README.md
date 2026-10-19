@@ -13,12 +13,12 @@ mindmap
       品种 BTC XAU
     后端 Convex
       猎场信号面板 battle
-        1h 背景偏置 摆动4
-        15m 日内方向 摆动16
-        OB FVG 入区 FVG优先
+        1h BOS 定方向 摆动4
+        1h OB 定区域
         IFVG 使邻近订单块失效
-        6h 窗口 60m 触发
-        5m 触发 右侧确认
+        15m FVG 入场
+        15m 扫荡后 BOS 硬条件
+        15m 右侧确认 6h 窗口 60m 触发
         buildRisk 止损止盈RR
         交易所止损止盈条件单
         表 battleSignals battleOutcomes battleState
@@ -66,14 +66,14 @@ mindmap
 
 | 步骤 | 内容 | 常量 | 代码位置 |
 |---|---|---|---|
-| 1 背景 | 1h 摆动结构定 bull/bear/range，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` |
-| 2 方向 | 15m 摆动 BOS/CHoCH（摆动 16），须日内且带位移 | `MTF_DIR_SWING=16`、`DISP_MULT=1.5` | `battleCore.ts:24` `:534` |
-| 3 入区 | 价格回到顺向未失效 15m OB/FVG；FVG 优先，多个取离 OB 最近，无 OB 取离价最近；邻近同向 FVG 被反向收盘穿越（IFVG）时订单块失效（区间距离 ≤0.25ATR） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:255` |
-| 4 窗口 | 首次入区起 6h，5m 收盘穿远端即失效 | `ZONE_WINDOW_BARS=24` | `battleCore.ts:27` |
-| 5 触发 | 5m 结构突破 / 吞没 / Pin Bar，须入区后 60 分钟内 | `CONFIRM_SPAN_MAX=12` | `battleCore.ts:30` |
-| 6 右侧 | 触发后下一根 5m 须顺势收盘且越过触发收盘价 | — | `battleCore.ts:633` |
-| 7 去重 | 同区域只推一次；失效后价格回来可重新布防 | `firedZone` | `battleCore.ts:650` |
-| 8 风控 | entry=区域近端，stop=远端±0.2ATR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:380` `buildRisk` |
+| 1 方向 | 1h 摆动结构（摆动 4）最近 BOS 定 bull/bear，反向收盘作废 | `HTF.swing=4` | `battleCore.ts:21` `:590` |
+| 2 区域 | 只用 1h 顺向未失效 OB；邻近同向 FVG 被反向收盘穿越（IFVG）时 OB 失效（区间距离 ≤0.25ATR） | `ZONE_BUF_ATR=0.15` | `battleCore.ts:237` `:255` |
+| 3 入场 | 价格进入与 1h OB 重叠的 15m 同向 FVG；可先入缺口再触及 OB | `ZONE_BUF_ATR=0.15` | `battleCore.ts:654` `:629` |
+| 4 扫荡BOS | 15m 先扫前摆动点，12 根内出现同向 BOS，硬条件 | `SWEEP_LOOKBACK=20`、`SWEEP_BOS_SPAN=12` | `battleCore.ts:36` `:401` |
+| 5 右侧 | 最近一根收盘 15m 须顺势；与入场同完成 | — | `battleCore.ts:664` |
+| 6 窗口 | 首次进入 OB 或入场 FVG 起 6h；60 分钟内须完成入场与右侧 | `ZONE_WINDOW_BARS=24`、`CONFIRM_SPAN_MAX=12` | `battleCore.ts:28` `:31` |
+| 7 去重 | 同区域只推一次；失效后价格回来可重新布防 | `firedZone` | `battleCore.ts:684` |
+| 8 风控 | entry=OB 近端，stop=远端±0.2ATR；target 取 RR≥2 的最近对手流动性 | `TARGET_MIN_RR=2`、`STOP_BUF_ATR=0.2` | `battleCore.ts:426` `buildRisk` |
 | 落库 | `battleSignals`、`battleOutcomes`、`battleState` | | `convex/battle.ts` |
 | 了结回填 | long 收盘≤stop 或最高≥target（short 反向），patch 信号 + 写 outcome | | `convex/battle.ts` `scan` |
 | 推送 | 每个新信号一条 Telegram，并触发 WEEX 市价单；成交后挂交易所止损/止盈条件单 | | `convex/battle.ts`、`convex/weex.ts` |

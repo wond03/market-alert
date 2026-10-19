@@ -1,8 +1,8 @@
 // 猎场信号面板纯逻辑（无 Convex 依赖）——被 convex/battle.ts 使用，并可在离线用真实
 // K 线复算，保证线上信号与看盘页「猎场信号面板」判定一致。
 //
-// 口径：MTF(15m) 结构定日内方向（1h 仅作背景，被反向收盘破坏即作废）→ MTF(15m) 顺方向、未缓解且带
-// 位移的 OB/FVG 为入区 → 价格进入该入区且出现低周期 5m 同向确认（结构突破/吞没/Pin Bar）才提示 → 输出入场/止损/止盈/盈亏比。
+// 口径：1h BOS 定方向（反向收盘作废）→ 1h 顺向未失效 OB 为入区 → 价格在 OB 内进入 15m 同向 FVG 才入场，
+// 且 15m 须先扫荡再出现同向 BOS（硬条件），入场时以 15m 顺势收盘做右侧确认 → 输出入场/止损/止盈/盈亏比。
 // 止盈：距入场 ≥TARGET_MIN_RR×风险 的最近对手流动性（1h 摆动点 + 前日/亚洲/开盘区间高低）。
 
 import type { Candle } from "./exchanges";
@@ -32,7 +32,8 @@ export const ZONE_BUF_ATR = 0.15; // 判定「价格在区域内」的 ATR 缓�
 export const STOP_BUF_ATR = 0.2; // 止损外扩的 ATR 缓冲
 export const DISP_WINDOW = 10; // 位移检测窗口：区域内起 N 根
 export const DISP_MULT = 1.5; // 位移 K 线：范围 ≥ N×ATR（且方向与区域一致）
-export const SWEEP_LOOKBACK = 20; // 扫荡检测回看根数（HTF）
+export const SWEEP_LOOKBACK = 20; // 扫荡检测回看根数
+export const SWEEP_BOS_SPAN = 12; // 扫荡后 BOS 的最大间隔（15m 根数）
 export const TARGET_MIN_RR = 2; // 止盈优选：取距入场 ≥ N×风险 的最近对手流动性
 const SIZE_BASE_NOTIONAL = 500; // 报表口径：每笔名义 USDT
 const SIZE_MULT = 0.75; // BTC × sweep=N × BOS 折价
@@ -396,6 +397,32 @@ export function sweepQuality(
   return { swept: false, level: null };
 }
 
+// 15m 扫荡后 BOS：先扫前摆动点，再在限定根数内出现同向 BOS。
+export function sweepThenBos(
+  candles: Candle[],
+  bias: Bias,
+  lookback = SWEEP_LOOKBACK,
+  swingLen = SWING_LEN,
+): { swept: boolean; bos: boolean; level: number | null; sweepIdx: number | null; bosIdx: number | null } {
+  const st = runStructure(candles, swingLen);
+  const pts = bias === "bull" ? st.lows : st.highs;
+  const from = Math.max(0, candles.length - lookback);
+  for (let i = from; i < candles.length; i++) {
+    const c = candles[i];
+    for (const p of pts) {
+      if (p.idx >= i) continue;
+      const hit =
+        bias === "bull" ? c.l < p.price && c.c > p.price : c.h > p.price && c.c < p.price;
+      if (!hit) continue;
+      const bos = st.breaks.find(
+        (b) => b.idx > i && b.idx <= i + SWEEP_BOS_SPAN && b.dir === bias && b.tag === "BOS",
+      );
+      if (bos) return { swept: true, bos: true, level: p.price, sweepIdx: i, bosIdx: bos.idx };
+    }
+  }
+  return { swept: false, bos: false, level: null, sweepIdx: null, bosIdx: null };
+}
+
 export function buildRisk(
   bias: Bias,
   zone: Zone,
@@ -557,139 +584,117 @@ export function evaluateBattle(
   // 方向失效 → 清空窗口与去重，观望。
   const resetRange: BattleEval = { bias: "range", firedZone: "", zoneKey: "", zoneStartT: null, signal: null };
 
-  // 日内方向：由 15m 结构刷新，且须落在当前北京日内（「当天有效」）。
-  const mtfSt = runStructure(mtf, MTF_DIR_SWING);
-  const dir = mtfSt.trendAtEnd;
-  const dirLast = mtfSt.breaks.length ? mtfSt.breaks[mtfSt.breaks.length - 1] : undefined;
-  const dirFresh = !!dirLast && dirLast.t >= gate.currentDayStart(now);
-  if ((dir !== "bull" && dir !== "bear") || !dirFresh) return resetRange;
-  // 位移硬过滤：定方向的这根 15m 摆动 BOS/CHoCH 必须带明确位移（同向且范围 ≥ DISP_MULT×ATR）。
-  const dirDisp = hasDisplacement(
-    mtf,
-    { kind: "OB", bias: dir as Bias, top: 0, bottom: 0, idx: dirLast!.idx, t: dirLast!.t },
-    atr(mtf, ATR_LEN),
-  );
-  if (!dirDisp) return resetRange;
-  const bias: Bias = dir;
+  // 方向：由 1h BOS 确定，反向收盘作废。
+  const dirLast = htfLast;
+  if (bg !== "bull" && bg !== "bear") return resetRange;
+  const bias: Bias = bg;
+  const sb = sweepThenBos(mtf, bias);
 
-  const sweep = sweepQuality(htfSt, htf, bias, SWEEP_LOOKBACK);
   const last = ltf[ltf.length - 1];
   const price = last.c;
   const lastCloseT = last.t + LTF.sec;
   const ltfAtr = atr(ltf, 14)[ltf.length - 1] || price * 0.002;
+ const mtfAtr = atr(mtf, ATR_LEN).filter((v) => isFinite(v)).pop() ?? 0;
+ const fbuf = ZONE_BUF_ATR * mtfAtr;
 
   // ---- 统一确认窗口状态机 ----
-  let zoneKey = prev.zoneKey;
-  let zoneStartT = prev.zoneStartT;
-  let firedZone = prev.firedZone;
-  let funnel: FunnelInfo | null = null;
+ let zoneKey = prev.zoneKey;
+ let zoneStartT = prev.zoneStartT;
+ let firedZone = prev.firedZone;
+ let funnel: FunnelInfo | null = null;
 
-  // 方向变化：跟踪的区域作废，清窗口（去重指纹保留，由失效判据决定是否重置）。
-  if (zoneKey && zoneKey.split("#")[0] !== bias) {
-    zoneKey = "";
-    zoneStartT = null;
-  }
+ // 方向变化：跟踪的区域作废，清窗口（去重指纹保留，由失效判据决定是否重置）。
+ if (zoneKey && zoneKey.split("#")[0] !== bias) {
+ zoneKey = "";
+ zoneStartT = null;
+ }
 
-  if (zoneKey && zoneStartT != null) {
-    const z = parseZoneKey(zoneKey)!;
-    const expired = lastCloseT - zoneStartT > (opts.zoneWindowSec ?? ZONE_WINDOW_SEC);
-    const invalid = zoneInvalidated(
-      opts.zoneInvalidateMtf ? mtf : ltf,
-      zoneStartT,
-      lastCloseT,
-      z,
-      opts.zoneInvalidateMtf ? MTF.sec : LTF.sec,
-    );
-    if (expired || invalid) {
-      if (firedZone === zoneKey) firedZone = "";
-      zoneKey = "";
-      zoneStartT = null;
-    }
-  }
+ if (zoneKey && zoneStartT != null) {
+ const z = parseZoneKey(zoneKey)!;
+ const expired = lastCloseT - zoneStartT > (opts.zoneWindowSec ?? ZONE_WINDOW_SEC);
+ const invalid = zoneInvalidated(
+ opts.zoneInvalidateMtf ? mtf : ltf,
+ zoneStartT,
+ lastCloseT,
+ z,
+ opts.zoneInvalidateMtf ? MTF.sec : LTF.sec,
+ );
+ if (expired||invalid) {
+ if (firedZone === zoneKey) firedZone = "";
+ zoneKey = "";
+ zoneStartT = null;
+ }
+ }
 
-  // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
-  if (!zoneKey) {
-    const buf = ZONE_BUF_ATR * ltfAtr;
-    const zones = battleZones(mtf, bias, opts.obMitigation ?? "close");
-    const inside = zones.filter(
-      (z) => price >= z.bottom - buf && price <= z.top + buf,
-    );
-    const gapTo = (a: Zone, b: Zone) =>
-      a.bottom > b.top ? a.bottom - b.top : b.bottom > a.top ? b.bottom - a.top : 0;
-    const centerDist = (z: Zone) => Math.abs(price - (z.top + z.bottom) / 2);
- const obs = zones.filter((z) => z.kind === "OB");
+ // 无活动窗口：若价格此刻正落在某个顺方向合格区域内，则记为「首次入区」开启窗口。
+ if (!zoneKey) {
+ const buf = ZONE_BUF_ATR * ltfAtr;
+ const zones = battleZones(htf, bias, opts.obMitigation ?? "close");
+ const inside = zones.filter(
+ (z) => price >= z.bottom - buf && price <= z.top + buf,
+ );
+ const centerDist = (z: Zone) => Math.abs(price - (z.top + z.bottom) / 2);
  let inZone: Zone | null = null;
- const fvgs = inside.filter((z) => z.kind === "FVG");
- if (fvgs.length) {
- if (obs.length) {
- for (const z of fvgs) {
- if (!inZone) {
- inZone = z;
- continue;
- }
- const best = inZone;
- const dz = Math.min(...obs.map((o) => gapTo(z, o)));
- const db = Math.min(...obs.map((o) => gapTo(best, o)));
- if (dz < db) inZone = z;
- }
- } else {
- for (const z of fvgs) {
- if (!inZone || centerDist(z) < centerDist(inZone)) inZone = z;
- }
- }
- } else {
  for (const z of inside) {
- if (z.kind !== "OB") continue;
  if (!inZone||centerDist(z) < centerDist(inZone)) inZone = z;
+ }
+ if (!inZone) {
+ // 价格先进入与 OB 重叠的 15m FVG 时，也可开启窗口。
+ const fvgs = computeFvgs(mtf).filter(
+ (f) =>
+ f.dir === bias &&
+ f.mitigatedIdx === null &&
+ price >= f.bottom - fbuf &&
+ price <= f.top + fbuf,
+ );
+ for (const z of zones) {
+ if (fvgs.some((f) => f.bottom <= z.top && f.top >= z.bottom)) {
+ inZone = z;
+ break;
+ }
  }
  }
  if (!inZone) return { bias, firedZone, zoneKey: "", zoneStartT: null, signal: null, funnel: null };
-    zoneKey = zoneToKey(inZone);
-    zoneStartT = last.t;
-    funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
-  }
+ zoneKey = zoneToKey(inZone);
+ zoneStartT = last.t;
+ funnel = { zoneKey, zoneStartT: last.t, c1T: null, c2T: null, confirmed: false };
+ }
 
-  const z = parseZoneKey(zoneKey)!;
-  const startT = zoneStartT as number;
+ const z = parseZoneKey(zoneKey)!;
+ const startT = zoneStartT as number;
 
-  // 窗口内：仅需 5m 触发（结构突破 / 吞没 / Pin Bar）。
-  const span = opts.confirmSpanMax ?? CONFIRM_SPAN_MAX;
-  const c2 = confirm2Indices(ltf, bias, startT, lastCloseT).filter(
-    (c) => ltf[c.i].t - startT < span * LTF.sec,
-  );
-  // 右侧确认：触发后下一根 5m 必须顺势收盘并继续朝信号方向。
-  let trig: (typeof c2)[number] | null = null;
-  let rightT: number | null = null;
-  for (const c of c2) {
-    const j = c.i + 1;
-    if (j >= ltf.length) break;
-    if (ltf[j].t - startT >= span * LTF.sec) break;
-    const tc = ltf[c.i];
-    const nc = ltf[j];
-    const ok =
-      bias === "bull" ? nc.c > nc.o && nc.c > tc.c : nc.c < nc.o && nc.c < tc.c;
-    if (!ok) continue;
-    trig = c;
-    rightT = nc.t;
-    break;
-  }
-  const c2T = trig && rightT != null ? rightT : c2.length ? ltf[c2[0].i]?.t ?? null : null;
-  funnel = {
-    zoneKey,
-    zoneStartT: startT,
-    c1T: null,
-    c2T,
-    confirmed: false,
-    pair: c2.length > 0,
-    gap: c2.length ? 0 : null,
-    c1n: 0,
-    c2n: c2.length,
-    c2Kind: (trig ?? c2[0])?.kind ?? null,
-  };
-  if (!trig) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
-  const pair = { confirm: `${trig.label}·右侧`, confirmInternal: trig.kind };
+ // 1h OB 内等待 15m FVG 入场；15m 先扫荡后 BOS 为硬条件。
+ const span = opts.confirmSpanMax ?? CONFIRM_SPAN_MAX;
+ const inEntry = computeFvgs(mtf).some(
+ (f) =>
+ f.dir === bias &&
+ f.mitigatedIdx === null &&
+ f.bottom <= z.top &&
+ f.top >= z.bottom &&
+ price >= f.bottom - fbuf &&
+ price <= f.top + fbuf,
+ );
+ const lastM = mtf[mtf.length - 1];
+ const right = !!lastM && (bias === "bull" ? lastM.c > lastM.o : lastM.c < lastM.o);
+ const fresh = lastCloseT - startT < span * LTF.sec;
+ const trig = sb.bos && inEntry && right && fresh;
+ const c2T = sb.bosIdx != null ? mtf[sb.bosIdx]?.t ?? null : null;
+ funnel = {
+ zoneKey,
+ zoneStartT: startT,
+ c1T: sb.sweepIdx != null ? mtf[sb.sweepIdx]?.t ?? null : null,
+ c2T,
+ confirmed: false,
+ pair: sb.bos,
+ gap: null,
+ c1n: sb.swept ? 1 : 0,
+ c2n: sb.bos ? 1 : 0,
+ c2Kind: trig ? "FVG" : null,
+ };
+ if (!trig) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
+ const pair = { confirm: "FVG·右侧", confirmInternal: "FVG" };
 
-  // 当天去重：同一区域只推一次。
+ // 当天去重：同一区域只推一次。
   if (firedZone === zoneKey) return { bias, firedZone, zoneKey, zoneStartT, signal: null, funnel };
   const risk = buildRisk(bias, z, htfSt, price, ltfAtr, intradayLevels(mtf, now));
   const dirTag = dirLast ? dirLast.tag : "结构";
@@ -711,9 +716,9 @@ export function evaluateBattle(
       stopPrice: risk.stop,
       targetPrice: risk.target,
       rr: risk.rr,
-      sweep: sweep.swept,
-      sweepLevel: sweep.level,
-      sigTs: rightT ?? last.t,
+      sweep: sb.swept,
+      sweepLevel: sb.level,
+      sigTs: lastM ? lastM.t + MTF.sec : last.t,
       text: buildMessage(
         exchange,
         symbol,
@@ -731,13 +736,13 @@ export function evaluateBattle(
         risk.stopPct,
         risk.target,
         risk.rr,
-        sweep.swept,
-        sweep.level,
+        sb.swept,
+        sb.level,
         now,
-        sizeNoteOf(symbol, pair.confirmInternal, sweep.swept, risk.entry),
+        sizeNoteOf(symbol, pair.confirmInternal, sb.swept, risk.entry),
       ),
     };
-  funnel = { zoneKey, zoneStartT: startT, c1T: null, c2T, confirmed: true, pair: true, tradable: true };
+  funnel = { zoneKey, zoneStartT: startT, c1T: sb.sweepIdx != null ? mtf[sb.sweepIdx]?.t ?? null : null, c2T, confirmed: true, pair: true, tradable: true };
   return { bias, firedZone: zoneKey, zoneKey, zoneStartT, funnel, signal };
 }
 
